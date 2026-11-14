@@ -213,4 +213,3 @@ Las pruebas cubren las siete métricas, el recálculo manual, los denominadores
 cero, un numerador cero con denominador positivo, el fallo de disco, los JSONL
 ausentes o malformados y la escritura del CLI. El proyecto usa `unittest`; no se
 agregó `pytest`.
-

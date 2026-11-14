@@ -651,4 +651,3 @@ def metricas_por_grupo(reporte: Mapping[str, Any]) -> dict[str, Mapping[str, Any
     if faltantes:
         raise ErrorMetricas(f"faltan metricas: {', '.join(faltantes)}")
     return {grupo: metricas[grupo] for grupo in GRUPOS}
-

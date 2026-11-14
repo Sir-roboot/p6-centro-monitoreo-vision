@@ -526,4 +526,3 @@ class RecalculoManual(unittest.TestCase):
         reporte = json.loads(salida.read_text(encoding="utf-8"))
         self.assertEqual(reporte["timestamp"], INSTANTE)
         self.assertEqual(len(reporte["metricas"]), 7)
-
