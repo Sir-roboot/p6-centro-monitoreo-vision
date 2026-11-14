@@ -16,6 +16,7 @@ from typing import Any, Callable, Iterator, Mapping
 import cv2
 import numpy as np
 
+from alertas import ejecutar_alertas, resumen_alertas
 from detector_yolox import RUTA_PESOS, cargar_detector
 from eventos import consultar_eventos, persistir_eventos
 from fuente import ObservacionFuente
@@ -85,6 +86,10 @@ def ejecutar_monitoreo(
         eventos_path = persistir_eventos(
             observaciones_path, politica_path, imagenes, root=root,
         )
+        alertas_path = ejecutar_alertas(
+            root, run_id, policy_path=politica_path,
+        )
+        resumen_alertas_run = resumen_alertas(root, run_id)
     return {
         "run_id": run_id,
         "technical_result": resumen["technical_result"],
@@ -93,6 +98,9 @@ def ejecutar_monitoreo(
         "events": str(eventos_path),
         "event_count": len(consultar_eventos(root, run_id)),
         "policy_status": politica["sustained_change"]["status"],
+        "alerts": str(alertas_path),
+        "alert_count": resumen_alertas_run["alert_count"],
+        "alerts_by_rule": resumen_alertas_run["counts_by_rule"],
     }
 
 

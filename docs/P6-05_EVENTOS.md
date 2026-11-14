@@ -35,7 +35,9 @@ El comando publica, sin sobrescribir corridas anteriores:
 - `datos_locales/observaciones/<run_id>.jsonl`: datos primarios P6-03;
 - `datos_locales/politicas/<run_id>-p6-04.json`: zonas y cambio sostenido P6-04;
 - `datos_locales/eventos/<run_id>.jsonl`: eventos P6-05;
-- `datos_locales/capturas/<hash-run>/`: JPEG vinculados.
+- `datos_locales/capturas/<hash-run>/`: JPEG vinculados;
+- `datos_locales/alertas/<run_id>.jsonl`: alertas P6-06 derivadas de esos
+  eventos y de la política de la corrida.
 
 Para consultar después de detener o reiniciar el proceso, sin cargar el modelo:
 
@@ -83,7 +85,7 @@ Las pruebas incluyen: cuadro aceptado, baja confianza, sin detecciones, error
 técnico, rechazo de política alterada, no sobrescritura de corrida, captura
 corrupta y consulta desde un proceso nuevo. Las imágenes de prueba son
 sintéticas: verifican el contrato y **no sustituyen** una demostración C1/C2.
-La suite completa ejecutó 95 pruebas correctas el 13 nov 2026.
+La suite completa ejecutó 105 pruebas correctas el 13 nov 2026.
 
 Corrida local real del 13 nov 2026, `p6-05-video-20261113-221955`: 136 cuadros
 recibidos, 10 inferidos, 234 detecciones puntuadas (55 `low`, 95 `doubt`, 84
@@ -106,7 +108,9 @@ reabrir esos archivos. La evidencia final de C1/C2 necesitará entradas o
 capturas accesibles y una demostración reproducible, además de métricas,
 alertas y consulta en el portal.
 
-P6-05 **no genera alertas ni portal**. P6-06 podrá referenciar eventos por
-`event_id`, condiciones por `policy_id` y evidencia visual por `capture.path`;
-deberá registrar sus propias reglas y no convertir `insufficient_evidence` en
-normalidad.
+P6-05 por sí mismo **no calcula reglas de alerta ni construye portal**. Su CLI
+invoca P6-06 al final para publicar `datos_locales/alertas/<run_id>.jsonl`;
+P6-06 referencia eventos por `event_id`, condiciones por `policy_id` y
+evidencia visual por `capture.path`, registra sus propias reglas y no convierte
+`insufficient_evidence` en normalidad. La consulta del portal sigue pendiente.
+Véase [P6-06_ALERTAS.md](P6-06_ALERTAS.md).

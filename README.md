@@ -2,9 +2,10 @@
 
 Proyecto individual de Santiago Ortiz para la materia Servicios de Aprendizaje
 Automático. Este repositorio está en **fase progresiva**: ya recibe video,
-ejecuta un detector real en CPU, persiste observaciones primarias versionadas y
-publica una política de confianza exploratoria y ya persiste eventos/capturas,
-pero todavía no implementa métricas G1–G7, alertas ni portal. No debe presentarse aún como entrega
+ejecuta un detector real en CPU, persiste observaciones primarias versionadas,
+publica una política de confianza exploratoria, persiste eventos/capturas y
+genera alertas P6-06 con reglas explícitas y evidencia verificable, pero todavía
+no implementa métricas G1–G7 ni portal. No debe presentarse aún como entrega
 completa.
 
 ## Estado y arquitectura actual
@@ -18,7 +19,8 @@ Video reproducido en la laptop
     → ejecutar_pipeline.py + observaciones.py (JSONL de P6-03)
     → evaluar_confianza.py + politica_confianza.py (política P6-04)
     → ejecutar_eventos.py + eventos.py (eventos y JPEG P6-05)
-    → futuras métricas, alertas y portal
+    → ejecutar_alertas.py + alertas.py (alertas persistentes P6-06)
+    → futuras métricas y portal
 ```
 
 El grabador está separado deliberadamente del Proyecto 6. Solo abre una señal
@@ -194,7 +196,7 @@ puntuaciones de P6-04 sin reclasificarlas.
 La corrida demo sobre la secuencia sintética no contiene objetos COCO: produce
 0 detecciones puntuadas, referencia `insufficient` y cambio
 `insufficient_evidence`; no demuestra zonas ni cambio sostenido. La última
-verificación local obtuvo **89 pruebas** correctas. Contrato completo, CLI,
+verificación local obtuvo **105 pruebas** correctas. Contrato completo, CLI,
 artefacto, estados y límites:
 [docs/P6-04_CONFIANZA.md](docs/P6-04_CONFIANZA.md).
 
@@ -202,8 +204,31 @@ artefacto, estados y límites:
 
 `ejecutar_eventos.py` registra cada cuadro inferido como evento y conserva su
 JPEG con vínculo y SHA-256. `consultar_eventos.py` permite releerlos y verificar
-las imágenes después de reiniciar, sin cargar el modelo. No genera alertas ni
-portal. Contrato, comandos y límites: [docs/P6-05_EVENTOS.md](docs/P6-05_EVENTOS.md).
+las imágenes después de reiniciar, sin cargar el modelo. Al terminar, el CLI
+invoca P6-06 para publicar las alertas de la misma corrida; P6-05 en sí no
+calcula reglas de alerta. Contrato, comandos y límites:
+[docs/P6-05_EVENTOS.md](docs/P6-05_EVENTOS.md).
+
+## Alertas persistentes (P6-06)
+
+`alertas.py` convierte únicamente eventos P6-05 ya persistidos y la política
+P6-04 que esos eventos referencian en alertas explícitas. No vuelve a inferir,
+no recalcula NMS ni zonas y no convierte `insufficient_evidence` en normalidad.
+Publica `datos_locales/alertas/<run_id>.jsonl` sin sobrescribir corridas y sin
+expiración automática. Las reglas son `p6-06-low-confidence` (baja confianza
+independiente de `sustained_change`), `p6-06-sustained-change` (solo con
+evidencia suficiente de P6-04) y `p6-06-insufficient-evidence` (informativa:
+la insuficiencia no acredita normalidad). El comando
+`.\\.venv\\Scripts\\python.exe .\\consultar_alertas.py --run-id $runId --verify`
+relee las alertas, comprueba los eventos y los hashes de las capturas después
+de reiniciar. La vista de alertas del portal (R5.3) sigue pendiente; P6-06 deja
+un contrato de consulta. En la corrida local
+`p6-05-verificacion-20261113-222520` se generaron 10 alertas `warning` de baja
+confianza con `no_sustained_change`, sin alertas críticas ni de insuficiencia;
+las 10 capturas y eventos se verificaron correctamente. Eso acredita C2 por
+alerta de baja confianza, **no** demuestra drift ni calidad del detector.
+Contrato, comandos, reglas y límites:
+[docs/P6-06_ALERTAS.md](docs/P6-06_ALERTAS.md).
 
 ## Entrada del monitor y video propio
 
@@ -242,10 +267,11 @@ El contrato de salida para el detector está en [docs/P6-01_FUENTE.md](docs/P6-0
 - Revisar y sustituir los umbrales exploratorios 0.30/0.70 de P6-04 con
   evidencia de C1/C2; la política ya distingue insuficiencia de normalidad, pero
   no acredita esas escenas.
-- Implementar las alertas de P6-06 a partir de eventos reales y una regla
-  declarada, sin crear normalidad con evidencia insuficiente.
+- Validar las reglas P6-06 con escenas reales de C1/C2; la implementación ya
+  existe, pero sus umbrales y resultados todavía son exploratorios.
 - Registrar métricas G1–G7 aplicables sobre las observaciones y la política.
-- Construir consulta de eventos y alertas en el portal.
+- Construir la consulta de eventos y alertas en el portal (R5.3); P6-06 solo
+  expone funciones y CLI locales.
 - Documentar y ejecutar C1/C2 con evidencia vinculada al commit evaluado.
 
 El material de origen, claves y capturas privadas no deben agregarse al
