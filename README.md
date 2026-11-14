@@ -3,8 +3,8 @@
 Proyecto individual de Santiago Ortiz para la materia Servicios de Aprendizaje
 Automático. Este repositorio está en **fase progresiva**: ya recibe video,
 ejecuta un detector real en CPU, persiste observaciones primarias versionadas y
-publica una política de confianza exploratoria, pero todavía no implementa
-métricas G1–G7, eventos, alertas ni portal. No debe presentarse aún como entrega
+publica una política de confianza exploratoria y ya persiste eventos/capturas,
+pero todavía no implementa métricas G1–G7, alertas ni portal. No debe presentarse aún como entrega
 completa.
 
 ## Estado y arquitectura actual
@@ -17,7 +17,8 @@ Video reproducido en la laptop
     → detectar_opencv.py + detector_yolox.py (YOLOX-Tiny COCO, CPU)
     → ejecutar_pipeline.py + observaciones.py (JSONL de P6-03)
     → evaluar_confianza.py + politica_confianza.py (política P6-04)
-    → futuras métricas, eventos, alertas y portal
+    → ejecutar_eventos.py + eventos.py (eventos y JPEG P6-05)
+    → futuras métricas, alertas y portal
 ```
 
 El grabador está separado deliberadamente del Proyecto 6. Solo abre una señal
@@ -187,8 +188,8 @@ consecutivas están degradadas: fracción `low >= 0.5` y caída de la media
 `>= 0.10` frente a la referencia. Los estados insuficientes
 (`insufficient_evidence`, `reference_incompatible`) **nunca** acreditan
 normalidad; `normality_established` solo puede ser `true` con
-`no_sustained_change` y no hay ventanas incompletas. P6-05 consumirá `p6_05_contract` sin reclasificar las
-puntuaciones.
+`no_sustained_change` y no hay ventanas incompletas. P6-05 consume las
+puntuaciones de P6-04 sin reclasificarlas.
 
 La corrida demo sobre la secuencia sintética no contiene objetos COCO: produce
 0 detecciones puntuadas, referencia `insufficient` y cambio
@@ -196,6 +197,13 @@ La corrida demo sobre la secuencia sintética no contiene objetos COCO: produce
 verificación local obtuvo **89 pruebas** correctas. Contrato completo, CLI,
 artefacto, estados y límites:
 [docs/P6-04_CONFIANZA.md](docs/P6-04_CONFIANZA.md).
+
+## Eventos y capturas persistentes (P6-05)
+
+`ejecutar_eventos.py` registra cada cuadro inferido como evento y conserva su
+JPEG con vínculo y SHA-256. `consultar_eventos.py` permite releerlos y verificar
+las imágenes después de reiniciar, sin cargar el modelo. No genera alertas ni
+portal. Contrato, comandos y límites: [docs/P6-05_EVENTOS.md](docs/P6-05_EVENTOS.md).
 
 ## Entrada del monitor y video propio
 
@@ -222,7 +230,8 @@ También se puede indicar `--source ruta\a\video.mp4` para un archivo local
 autorizado. La fuente MJPEG no queda reproducible desde un clon aislado por sí
 sola: requiere el grabador y el video. La secuencia sintética sí verifica la
 entrada sin esos recursos, pero C1/C2 requerirán escenas reales accesibles.
-Ni el lector ni el grabador guardan cuadros en esta etapa.
+Ni el lector ni el grabador guardan cuadros por sí mismos; el comando P6-05
+conserva solo los cuadros muestreados que pasan por inferencia.
 
 El contrato de salida para el detector está en [docs/P6-01_FUENTE.md](docs/P6-01_FUENTE.md).
 
@@ -233,9 +242,8 @@ El contrato de salida para el detector está en [docs/P6-01_FUENTE.md](docs/P6-0
 - Revisar y sustituir los umbrales exploratorios 0.30/0.70 de P6-04 con
   evidencia de C1/C2; la política ya distingue insuficiencia de normalidad, pero
   no acredita esas escenas.
-- Implementar P6-05 conforme a `p6_05_contract`: eventos, capturas y alertas
-  persistentes sin reclasificar puntuaciones ni crear normalidad con evidencia
-  insuficiente.
+- Implementar las alertas de P6-06 a partir de eventos reales y una regla
+  declarada, sin crear normalidad con evidencia insuficiente.
 - Registrar métricas G1–G7 aplicables sobre las observaciones y la política.
 - Construir consulta de eventos y alertas en el portal.
 - Documentar y ejecutar C1/C2 con evidencia vinculada al commit evaluado.

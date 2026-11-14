@@ -579,6 +579,7 @@ def ejecutar_pipeline(
     run_id: str | None = None,
     overwrite: bool = False,
     lector: Callable[..., Iterator[ObservacionFuente]] | None = None,
+    on_observation: Callable[[Mapping[str, Any], np.ndarray | None], None] | None = None,
 ) -> dict[str, Any]:
     """Ejecuta fuente -> detector y persiste observaciones primarias.
 
@@ -620,6 +621,8 @@ def ejecutar_pipeline(
     lector = lector or leer_fuente
     if not callable(lector):
         raise ValueError("lector debe ser invocable")
+    if on_observation is not None and not callable(on_observation):
+        raise ValueError("on_observation debe ser invocable")
 
     iniciado_en = _instante()
     inicio = time.perf_counter()
@@ -699,6 +702,8 @@ def ejecutar_pipeline(
                     modelo_compacto=modelo_compacto,
                     modelo=modelo, filtros=filtros,
                 )
+                if on_observation is not None:
+                    on_observation(registro, observacion.image)
                 _acumular(registro, contadores)
                 _escribir_registro(archivo, registro)
                 if registro["status"] == "end_of_stream":
