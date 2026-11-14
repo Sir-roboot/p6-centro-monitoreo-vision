@@ -20,12 +20,29 @@ Con artefactos en `datos_locales/`:
 ```
 
 Abrir `http://127.0.0.1:8080/`. Para habilitar las métricas derivadas
-opcionales:
+opcionales y la vista del reporte G1–G7:
 
 ```powershell
 .\.venv\Scripts\python.exe .\portal.py `
   --root .\datos_locales --port 8080 --metrics
 ```
+
+`--metrics` no calcula nada: habilita la lectura de los conteos auxiliares y la
+vista del reporte P6-07 ya persistido. Por omisión el reporte se busca en
+
+1. `datos_locales/metricas/<run_id>-final.json`;
+2. `datos_locales/reportes/p6-07-<run_id>.json`.
+
+Para usar otra carpeta:
+
+```powershell
+.\.venv\Scripts\python.exe .\portal.py `
+  --root .\datos_locales --port 8080 --metrics `
+  --metrics-dir .\otra_carpeta
+```
+
+En esa carpeta se aceptan `<run_id>-final.json` y `p6-07-<run_id>.json`, con la
+misma validación que las rutas por omisión.
 
 El proceso imprime la URL real (incluido el puerto elegido) y se detiene con
 `Ctrl+C`. No hay autenticación: el portal está pensado para un equipo local y
@@ -41,6 +58,8 @@ no debe exponerse en otra interfaz ni publicarse por un túnel.
 | `/portal/runs/<run_id>/alerts/<alert_id>` | Alerta completa y JSON persistido escapado. |
 | `/portal/runs/<run_id>/captures/<event_id>` | JPEG verificado del evento. |
 | `/portal/runs/<run_id>/metrics` | Conteos derivados, solo con `--metrics`. |
+| `/portal/runs/<run_id>/metrics/g1-g7` | Tabla G1–G7 del reporte P6-07 persistido, solo con `--metrics`. |
+| `/portal/runs/<run_id>/metrics/g1-g7.json` | Reporte P6-07 completo o aviso JSON de ausencia/error. |
 | `/healthz` | `{"ok": true, "read_only": true}`. |
 
 Las alertas muestran `occurred_at`, `rule_id`, `severity`, `occurrence_state`,
@@ -68,31 +87,51 @@ corrida sin eventos se presenta con un aviso explícito y no como normalidad.
   externos, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` y
   `Cache-Control: no-store`.
 
-## Métricas opcionales
+## Métricas opcionales y reporte G1–G7
 
-Sin `--metrics`, `/metrics` responde `404`. Con la bandera habilitada devuelve
-`application/json` con `schema: "p6-08/metrics/1"` y conteos calculados en el
-momento a partir de los artefactos persistidos: eventos, alertas, capturas,
-estados de evento, zonas, severidades, reglas y `occurrence_state`.
+Sin `--metrics`, tanto `/metrics` como `/metrics/g1-g7` responden `404`. Con la
+bandera habilitada, `/metrics` devuelve `application/json` con
+`schema: "p6-08/metrics/1"` y conteos calculados en el momento a partir de los
+artefactos persistidos: eventos, alertas, capturas, estados de evento, zonas,
+severidades, reglas y `occurrence_state`.
 
 Son **conteos operativos**, no las métricas G1–G7: no miden precisión, recall ni
-calidad predictiva y no acreditan C1/C2. El propio JSON incluye
-`limitations` con esa aclaración. La página de corrida solo muestra el enlace
-cuando las métricas están habilitadas.
+calidad predictiva y no acreditan C1/C2. El propio JSON incluye `limitations`
+con esa aclaración. La página de corrida muestra ambos enlaces por separado.
+
+`/portal/runs/<run_id>/metrics/g1-g7` es otra vista: lee el reporte P6-07 ya
+persistido, **no lo recalcula**. Antes de mostrarlo exige:
+
+- que el archivo exista en `metricas/<run_id>-final.json`,
+  `reportes/p6-07-<run_id>.json` o en `--metrics-dir`;
+- que sea JSON UTF-8 de un objeto (máximo 4 MiB);
+- que `schema` sea exactamente `p6-07/1`;
+- que `run_id` coincida con el de la URL;
+- que estén los siete grupos G1–G7 con su objeto de métrica.
+
+Si el reporte existe, la tabla muestra grupo, nombre, valor, unidad, numerador,
+denominador, estado y timestamp, con enlace al JSON persistido. Si no existe, la
+vista HTML responde `200` con el aviso **«Sin reporte G1-G7»** y las rutas
+buscadas; la API responde `404` con `disponible: false` y nunca inventa valores.
+Si el archivo existe pero es inválido, ambos responden `422` con el motivo. Las
+métricas G1–G7 no se mezclan con los conteos auxiliares.
+
 
 ## API reutilizable
 
 ```python
-from portal import crear_servidor, listar_runs, metricas_run
+from portal import crear_servidor, listar_runs, metricas_run, reporte_metricas
 
 runs = listar_runs("datos_locales")
-metricas = metricas_run("datos_locales", runs[0])
+metricas = metricas_run("datos_locales", runs[0])   # conteos, no G1-G7
+reporte = reporte_metricas("datos_locales", runs[0])  # None si no hay JSON
 servidor = crear_servidor("datos_locales", 0, metricas=True)
 ```
 
-`crear_servidor(..., 0)` permite elegir un puerto libre; el servidor no arranca
-hasta llamar a `serve_forever()`. Las pruebas lo levantan en un hilo y lo
-detienen con `shutdown()`/`server_close()`.
+`reporte_metricas` devuelve `None` cuando no hay reporte y lanza `ErrorPortal`
+si el archivo existe pero no cumple `p6-07/1`. `crear_servidor(..., 0)` permite
+elegir un puerto libre; el servidor no arranca hasta llamar a `serve_forever()`.
+Las pruebas lo levantan en un hilo y lo detienen con `shutdown()`/`server_close()`.
 
 ## Verificación
 
@@ -104,8 +143,11 @@ detienen con `shutdown()`/`server_close()`.
 detector falso de P6-05 y comprueba: índice y detalle, entrega de JPEG
 verificado solo por `event_id`, solo loopback y métodos permitidos, rechazo de
 traversal e identificadores inválidos, escapado de `<script>` persistido,
-métricas habilitadas/deshabilitadas y validaciones locales. Son 8 pruebas; la
-suite completa ejecutó 119 pruebas correctas el 13 nov 2026.
+métricas habilitadas/deshabilitadas y validaciones locales. Además cubre el
+reporte G1–G7 con un JSON P6-07 real (tabla HTML y API), sin reporte (aviso
+explícito, `404`, sin valores fabricados), JSON inválido o con `schema`/`run_id`
+incorrecto (`422`) y `--metrics-dir` alternativo. Son 12 pruebas de portal; la
+suite completa ejecutó 143 pruebas correctas el 13 nov 2026.
 
 ## Límites
 
@@ -118,3 +160,6 @@ suite completa ejecutó 119 pruebas correctas el 13 nov 2026.
 - No modela ciclo de vida de alertas: `occurrence_state` se muestra tal como lo
   persiste P6-06 (`triggered`/`informational`), sin `active`/`resolved`.
 - Las métricas opcionales son conteos, no una evaluación de calidad del modelo.
+- La vista G1–G7 solo refleja el último reporte P6-07 guardado para ese
+  `run_id`; si se recalcula, hay que reemplazar el archivo. El portal no detecta
+  que el reporte esté desactualizado respecto de los eventos/alertas actuales.

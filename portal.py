@@ -5,9 +5,15 @@ genera eventos/alertas y no escribe artefactos. Usa exclusivamente la biblioteca
 estandar, escucha solo en 127.0.0.1 y resuelve capturas por ``event_id`` a traves
 de ``abrir_captura``, que verifica SHA-256 y confina la ruta a ``capturas/``.
 
-Las metricas son **opcionales** (``--metrics``). Cuando se habilitan se exponen
-en ``/portal/runs/<run_id>/metrics`` como conteos derivados de los artefactos
-persistidos; no son las metricas G1-G7 ni acreditan precision del detector.
+Las metricas son **opcionales** (``--metrics``). Cuando se habilitan:
+
+- ``/portal/runs/<run_id>/metrics`` expone conteos derivados de los artefactos
+  persistidos; no son las metricas G1-G7 ni acreditan precision del detector;
+- ``/portal/runs/<run_id>/metrics/g1-g7`` muestra el reporte P6-07 ya persistido
+  (``p6-07/1``) leido de ``<root>/metricas/<run_id>-final.json`` o
+  ``<root>/reportes/p6-07-<run_id>.json`` (o de ``--metrics-dir``). El portal no
+  recalcula esas metricas: valida ``run_id``/``schema`` y muestra exactamente lo
+  persistido, o un aviso explicito cuando no hay reporte.
 """
 
 from __future__ import annotations
@@ -31,6 +37,9 @@ from eventos import PATRON_RUN_ID, ErrorEventos, abrir_captura, consultar_evento
 HOST = "127.0.0.1"
 PATRON_EVENT_ID = re.compile(r"^[0-9a-f]{32}$")
 MAX_EVENTOS_PAGINA = 500
+ESQUEMA_METRICAS = "p6-07/1"
+GRUPOS_METRICAS = ("G1", "G2", "G3", "G4", "G5", "G6", "G7")
+MAX_REPORTE_BYTES = 4 * 1024 * 1024
 
 TIPOS = {
     ".html": "text/html; charset=utf-8",
@@ -109,6 +118,94 @@ def _leer_alertas(root: Path, run_id: str) -> list[dict[str, Any]]:
         raise ErrorPortal(f"alertas no legibles: {exc}") from exc
 
 
+def rutas_reporte_metricas(
+    root: str | Path, run_id: str, *, metrics_dir: str | Path | None = None
+) -> list[Path]:
+    """Rutas candidatas del reporte P6-07, en orden de preferencia."""
+
+    run_id = _validar_run(run_id)
+    if metrics_dir is not None:
+        base = Path(metrics_dir)
+        return [
+            base / f"{run_id}-final.json",
+            base / f"p6-07-{run_id}.json",
+        ]
+    base = Path(root)
+    return [
+        base / "metricas" / f"{run_id}-final.json",
+        base / "reportes" / f"p6-07-{run_id}.json",
+    ]
+
+
+def reporte_metricas(
+    root: str | Path,
+    run_id: str,
+    *,
+    metrics_dir: str | Path | None = None,
+) -> dict[str, Any] | None:
+    """Lee el reporte G1-G7 ya persistido; nunca lo recalcula ni lo inventa.
+
+    Devuelve ``None`` si no existe ningun archivo candidato. Lanza
+    :class:`ErrorPortal` si el archivo existe pero no es un reporte P6-07
+    valido (JSON ilegible, ``schema`` distinto de ``p6-07/1``, ``run_id`` que no
+    coincide o grupos G1-G7 incompletos).
+    """
+
+    run_id = _validar_run(run_id)
+    if metrics_dir is not None:
+        base = Path(metrics_dir).resolve()
+    else:
+        base = Path(root).resolve()
+    candidatos = [ruta for ruta in rutas_reporte_metricas(
+        root, run_id, metrics_dir=metrics_dir
+    ) if ruta.is_file()]
+    if not candidatos:
+        return None
+    ruta = candidatos[0]
+    try:
+        resuelta = ruta.resolve()
+        # El run_id ya esta validado; esta comprobacion impide que un enlace
+        # simbolico saque la lectura de la base permitida.
+        resuelta.relative_to(base)
+    except (OSError, ValueError) as exc:
+        raise ErrorPortal(f"reporte de metricas fuera de la base permitida: {ruta}") from exc
+    try:
+        if resuelta.stat().st_size > MAX_REPORTE_BYTES:
+            raise ErrorPortal(
+                f"reporte de metricas demasiado grande (> {MAX_REPORTE_BYTES} bytes)"
+            )
+        with resuelta.open("r", encoding="utf-8") as archivo:
+            reporte = json.load(archivo)
+    except ErrorPortal:
+        raise
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ErrorPortal(f"reporte de metricas no legible: {exc}") from exc
+    if not isinstance(reporte, dict):
+        raise ErrorPortal("reporte de metricas invalido: debe ser un objeto JSON")
+    if reporte.get("schema") != ESQUEMA_METRICAS:
+        raise ErrorPortal(
+            "reporte de metricas invalido: schema distinto de "
+            f"{ESQUEMA_METRICAS}"
+        )
+    if reporte.get("run_id") != run_id:
+        raise ErrorPortal(
+            "reporte de metricas invalido: run_id del reporte no coincide con "
+            f"{run_id}"
+        )
+    metricas = reporte.get("metricas")
+    if not isinstance(metricas, Mapping):
+        raise ErrorPortal("reporte de metricas invalido: falta el objeto metricas")
+    faltantes = [
+        grupo for grupo in GRUPOS_METRICAS
+        if not isinstance(metricas.get(grupo), Mapping)
+    ]
+    if faltantes:
+        raise ErrorPortal(
+            "reporte de metricas invalido: faltan grupos " + ", ".join(faltantes)
+        )
+    return reporte
+
+
 def _estilo() -> str:
     return """
     :root { color-scheme: light dark; }
@@ -129,10 +226,18 @@ def _estilo() -> str:
     """
 
 
-def _plantilla(titulo: str, cuerpo: str, *, metricas: bool) -> str:
-    enlace_metricas = (
-        '<li><a href="metrics">Metricas derivadas (JSON)</a></li>' if metricas else ""
-    )
+def _plantilla(
+    titulo: str, cuerpo: str, *, metricas: bool, run_id: str | None = None
+) -> str:
+    if metricas and run_id:
+        enlace_metricas = (
+            f'<li><a href="/portal/runs/{_e(run_id)}/metrics">'
+            "Metricas derivadas (JSON)</a></li>"
+        )
+    elif metricas:
+        enlace_metricas = '<li><a href="metrics">Metricas derivadas (JSON)</a></li>'
+    else:
+        enlace_metricas = ""
     return (
         "<!doctype html><html lang=\"es\"><head><meta charset=\"utf-8\">"
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -263,18 +368,29 @@ def _detalle_run(root: Path, run_id: str, *, metricas: bool) -> str:
     tarjetas = "".join(_tarjeta_alerta(run_id, alerta) for alerta in alertas)
     if not tarjetas:
         tarjetas = '<p class="aviso">La corrida no tiene alertas P6-06 persistidas.</p>'
+    enlaces_metricas = ""
+    if metricas:
+        enlaces_metricas = (
+            f'<p><a href="/portal/runs/{_e(run_id)}/metrics/g1-g7">'
+            "Metricas G1-G7 (reporte P6-07)</a> · "
+            f'<a href="/portal/runs/{_e(run_id)}/metrics">'
+            "Conteos auxiliares (JSON)</a></p>"
+            '<p class="meta">Los conteos auxiliares no son G1-G7; el reporte '
+            "G1-G7 solo se muestra si existe un JSON p6-07/1 persistido.</p>"
+        )
     cuerpo = (
         f'<p class="meta">run_id: {_e(run_id)} · eventos: {len(eventos)} · '
         f"alertas: {len(alertas)}</p>"
         '<p class="aviso">Una corrida sin eventos o una alerta informativa no '
         "acreditan normalidad. Las zonas y confianzas se muestran tal como se "
         "persistieron.</p>"
-        "<h2>Alertas</h2>"
+        + enlaces_metricas
+        + "<h2>Alertas</h2>"
         + tarjetas
         + "<h2>Eventos</h2>"
         + _tabla_eventos(root, run_id, eventos)
     )
-    return _plantilla(f"Corrida {run_id}", cuerpo, metricas=metricas)
+    return _plantilla(f"Corrida {run_id}", cuerpo, metricas=metricas, run_id=run_id)
 
 
 def _pagina_error(mensaje: str) -> str:
@@ -299,7 +415,9 @@ def _detalle_evento(root: Path, run_id: str, event_id: str, *, metricas: bool) -
         + _e(json.dumps(evento, ensure_ascii=False, indent=2, sort_keys=True))
         + "</pre>"
     )
-    return _plantilla(f"Evento {event_id}", cuerpo, metricas=metricas)
+    return _plantilla(
+        f"Evento {event_id}", cuerpo, metricas=metricas, run_id=run_id
+    )
 
 
 def _detalle_alerta(root: Path, run_id: str, alert_id: str, *, metricas: bool) -> str:
@@ -314,7 +432,83 @@ def _detalle_alerta(root: Path, run_id: str, alert_id: str, *, metricas: bool) -
         + _e(json.dumps(alerta, ensure_ascii=False, indent=2, sort_keys=True))
         + "</pre>"
     )
-    return _plantilla(f"Alerta {alert_id}", cuerpo, metricas=metricas)
+    return _plantilla(
+        f"Alerta {alert_id}", cuerpo, metricas=metricas, run_id=run_id
+    )
+
+
+def _tabla_g1_g7(reporte: Mapping[str, Any]) -> str:
+    filas = []
+    for grupo in GRUPOS_METRICAS:
+        metrica = reporte["metricas"][grupo]
+        filas.append(
+            "<tr>"
+            f"<td>{_e(grupo)}</td>"
+            f"<td>{_e(metrica.get('nombre'))}</td>"
+            f"<td>{_e(metrica.get('valor'))}</td>"
+            f"<td>{_e(metrica.get('unidad'))}</td>"
+            f"<td>{_e(metrica.get('numerador'))}</td>"
+            f"<td>{_e(metrica.get('denominador'))}</td>"
+            f"<td>{_e(metrica.get('estado'))}</td>"
+            f"<td>{_e(metrica.get('timestamp'))}</td>"
+            "</tr>"
+        )
+    return (
+        "<table><thead><tr><th>Grupo</th><th>Metrica</th><th>Valor</th>"
+        "<th>Unidad</th><th>Numerador</th><th>Denominador</th><th>Estado</th>"
+        "<th>Timestamp</th></tr></thead><tbody>"
+        + "".join(filas)
+        + "</tbody></table>"
+    )
+
+
+def _detalle_g1_g7(
+    root: Path,
+    run_id: str,
+    *,
+    metricas: bool,
+    metrics_dir: str | Path | None = None,
+    reporte: Mapping[str, Any] | None = None,
+) -> str:
+    if reporte is None:
+        reporte = reporte_metricas(root, run_id, metrics_dir=metrics_dir)
+    volver = f'<p><a href="/portal/runs/{_e(run_id)}">Volver a la corrida</a></p>'
+    if reporte is None:
+        rutas = rutas_reporte_metricas(root, run_id, metrics_dir=metrics_dir)
+        cuerpo = (
+            volver
+            + '<p class="aviso"><strong>Sin reporte G1-G7 para esta corrida.</strong> '
+            "El portal no fabrica metricas: ejecute P6-07 (calcular_metricas.py) y "
+            "guarde el JSON en una de estas rutas, o use --metrics-dir.</p>"
+            "<ul>"
+            + "".join(f"<li><code>{_e(str(ruta))}</code></li>" for ruta in rutas)
+            + "</ul>"
+            + f'<p><a href="/portal/runs/{_e(run_id)}/metrics">'
+            "Conteos auxiliares (JSON)</a>: no son las metricas G1-G7.</p>"
+        )
+    else:
+        enlace_json = (
+            f'<p><a href="/portal/runs/{_e(run_id)}/metrics/g1-g7.json">'
+            "Ver JSON persistido del reporte P6-07</a></p>"
+        )
+        cuerpo = (
+            volver
+            + f'<p class="meta">run_id: {_e(reporte.get("run_id"))} · '
+            f"schema: {_e(reporte.get('schema'))} · "
+            f"timestamp: {_e(reporte.get('timestamp'))} · "
+            f"generated_at: {_e(reporte.get('generated_at'))}</p>"
+            + enlace_json
+            + _tabla_g1_g7(reporte)
+            + '<p class="aviso">El portal solo lee el reporte P6-07 ya '
+            "persistido: no recalcula sus valores ni los usa como conteos "
+            "auxiliares. Un valor nulo o estado sin_datos no es un exito.</p>"
+            + f'<p><a href="/portal/runs/{_e(run_id)}/metrics">'
+            "Conteos auxiliares (JSON)</a>: no son las metricas G1-G7.</p>"
+        )
+    return _plantilla(
+        f"Metricas G1-G7 · {run_id}", cuerpo, metricas=metricas, run_id=run_id
+    )
+
 
 
 def metricas_run(root: str | Path, run_id: str) -> dict[str, Any]:
@@ -404,6 +598,80 @@ class ManejadorPortal(BaseHTTPRequestHandler):
     def _metricas(self) -> bool:
         return bool(self.server.metricas)  # type: ignore[attr-defined]
 
+    @property
+    def _metrics_dir(self) -> Path | None:
+        return self.server.metrics_dir  # type: ignore[attr-defined]
+
+    def _responder_g1_g7(self, run_id: str, *, es_json: bool) -> None:
+        if not self._metricas:
+            if es_json:
+                self._json(
+                    HTTPStatus.NOT_FOUND,
+                    {
+                        "schema": "p6-08/g1-g7/1",
+                        "run_id": run_id,
+                        "disponible": False,
+                        "motivo": "metricas opcionales deshabilitadas",
+                    },
+                )
+            else:
+                self._error(HTTPStatus.NOT_FOUND, "Metricas opcionales deshabilitadas.")
+            return
+        try:
+            reporte = reporte_metricas(
+                self._root, run_id, metrics_dir=self._metrics_dir
+            )
+        except ErrorPortal as exc:
+            if es_json:
+                self._json(
+                    HTTPStatus.UNPROCESSABLE_ENTITY,
+                    {
+                        "schema": "p6-08/g1-g7/1",
+                        "run_id": run_id,
+                        "disponible": False,
+                        "error": str(exc),
+                    },
+                )
+            else:
+                self._error(HTTPStatus.UNPROCESSABLE_ENTITY, str(exc))
+            return
+        if reporte is None:
+            if es_json:
+                rutas = [
+                    str(ruta) for ruta in rutas_reporte_metricas(
+                        self._root, run_id, metrics_dir=self._metrics_dir
+                    )
+                ]
+                self._json(
+                    HTTPStatus.NOT_FOUND,
+                    {
+                        "schema": "p6-08/g1-g7/1",
+                        "run_id": run_id,
+                        "disponible": False,
+                        "motivo": "no hay reporte G1-G7 persistido para la corrida",
+                        "rutas_buscadas": rutas,
+                    },
+                )
+            else:
+                self._html(
+                    HTTPStatus.OK,
+                    _detalle_g1_g7(
+                        self._root, run_id, metricas=True,
+                        metrics_dir=self._metrics_dir,
+                    ),
+                )
+            return
+        if es_json:
+            self._json(HTTPStatus.OK, reporte)
+        else:
+            self._html(
+                HTTPStatus.OK,
+                _detalle_g1_g7(
+                    self._root, run_id, metricas=True,
+                    metrics_dir=self._metrics_dir, reporte=reporte,
+                ),
+            )
+
     def do_HEAD(self) -> None:  # noqa: N802
         self.do_GET()
 
@@ -456,6 +724,9 @@ class ManejadorPortal(BaseHTTPRequestHandler):
                 return
             self._json(HTTPStatus.OK, metricas_run(self._root, run_id))
             return
+        if resto in (["metrics", "g1-g7"], ["metrics", "g1-g7.json"]):
+            self._responder_g1_g7(run_id, es_json=resto[1].endswith(".json"))
+            return
         if len(resto) != 2:
             self._error(HTTPStatus.NOT_FOUND, "Ruta no encontrada.")
             return
@@ -489,6 +760,7 @@ def crear_servidor(
     puerto: int = 8080,
     *,
     metricas: bool = False,
+    metrics_dir: str | Path | None = None,
 ) -> ThreadingHTTPServer:
     """Crea el servidor ligado exclusivamente a 127.0.0.1."""
 
@@ -497,10 +769,16 @@ def crear_servidor(
     raiz = Path(root).resolve()
     if not raiz.is_dir():
         raise FileNotFoundError(f"la raiz no existe o no es un directorio: {raiz}")
+    directorio_metricas: Path | None = None
+    if metrics_dir is not None:
+        directorio_metricas = Path(metrics_dir).resolve()
+        if directorio_metricas.exists() and not directorio_metricas.is_dir():
+            raise ValueError(f"metrics-dir no es un directorio: {directorio_metricas}")
     servidor = ThreadingHTTPServer((HOST, puerto), ManejadorPortal)
     servidor.daemon_threads = True
     servidor.root = raiz  # type: ignore[attr-defined]
     servidor.metricas = metricas  # type: ignore[attr-defined]
+    servidor.metrics_dir = directorio_metricas  # type: ignore[attr-defined]
     return servidor
 
 
@@ -511,11 +789,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--metrics",
         action="store_true",
-        help="habilita conteos derivados opcionales en /metrics",
+        help=(
+            "habilita conteos derivados en /metrics y la vista del reporte "
+            "G1-G7 en /metrics/g1-g7"
+        ),
+    )
+    parser.add_argument(
+        "--metrics-dir",
+        type=Path,
+        help=(
+            "carpeta alternativa con <run_id>-final.json o "
+            "p6-07-<run_id>.json (por omision: <root>/metricas y <root>/reportes)"
+        ),
     )
     args = parser.parse_args(argv)
     try:
-        servidor = crear_servidor(args.root, args.port, metricas=args.metrics)
+        servidor = crear_servidor(
+            args.root,
+            args.port,
+            metricas=args.metrics,
+            metrics_dir=args.metrics_dir,
+        )
     except (OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -525,7 +819,12 @@ def main(argv: list[str] | None = None) -> int:
         flush=True,
     )
     if args.metrics:
-        print("Metricas derivadas habilitadas en /portal/runs/<run_id>/metrics", flush=True)
+        print(
+            "Metricas habilitadas: conteos auxiliares en "
+            "/portal/runs/<run_id>/metrics y reporte G1-G7 en "
+            "/portal/runs/<run_id>/metrics/g1-g7",
+            flush=True,
+        )
     try:
         servidor.serve_forever()
     except KeyboardInterrupt:

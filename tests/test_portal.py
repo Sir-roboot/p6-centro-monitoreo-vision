@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections import Counter
 import json
 from pathlib import Path
+import shutil
 import tempfile
 import threading
 import unittest
@@ -22,6 +23,7 @@ from detector_yolox import Deteccion, ResultadoCuadro
 from ejecutar_eventos import ejecutar_monitoreo
 from eventos import consultar_eventos
 from fuente import ObservacionFuente
+from metricas import GRUPOS, calcular_metricas
 from observaciones import ejecutar_pipeline
 from portal import (
     ErrorPortal,
@@ -29,6 +31,7 @@ from portal import (
     listar_runs,
     main,
     metricas_run,
+    reporte_metricas,
 )
 
 MODELO = {
@@ -98,8 +101,10 @@ class PortalTests(unittest.TestCase):
         self.alertas = consultar_alertas(self.root, RUN)
         self.url = self._iniciar(metricas=True)
 
-    def _iniciar(self, *, metricas):
-        servidor = crear_servidor(self.root, 0, metricas=metricas)
+    def _iniciar(self, *, metricas, metrics_dir=None):
+        servidor = crear_servidor(
+            self.root, 0, metricas=metricas, metrics_dir=metrics_dir
+        )
         hilo = threading.Thread(target=servidor.serve_forever, daemon=True)
         hilo.start()
         # Los addCleanup se ejecutan en orden inverso: primero shutdown, luego
@@ -118,6 +123,23 @@ class PortalTests(unittest.TestCase):
                 return respuesta.status, respuesta.headers, respuesta.read()
         except HTTPError as error:
             return error.code, error.headers, error.read()
+
+    def _escribir_reporte(self):
+        """Genera un reporte P6-07 real con los artefactos de la corrida."""
+
+        reporte = calcular_metricas(
+            ruta_observaciones=self.root / "observaciones" / f"{RUN}.jsonl",
+            ruta_eventos=self.root / "eventos" / f"{RUN}.jsonl",
+            ruta_alertas=self.root / "alertas" / f"{RUN}.jsonl",
+            root=self.root,
+            generated_at=INSTANTE,
+        )
+        ruta = self.root / "metricas" / f"{RUN}-final.json"
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        ruta.write_text(
+            json.dumps(reporte, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        return reporte, ruta
 
     def test_indice_y_detalle_muestran_eventos_alertas_y_capturas(self):
         estado, cabeceras, cuerpo = self._get("/")
@@ -198,6 +220,121 @@ class PortalTests(unittest.TestCase):
         base_sin = self._iniciar(metricas=False)
         estado, _, _ = self._get(f"/portal/runs/{RUN}/metrics", base=base_sin)
         self.assertEqual(estado, 404)
+
+    def test_reporte_g1_g7_real_html_y_api(self):
+        reporte, _ = self._escribir_reporte()
+        estado, cabeceras, cuerpo = self._get(
+            f"/portal/runs/{RUN}/metrics/g1-g7"
+        )
+        self.assertEqual(estado, 200)
+        self.assertIn("text/html", cabeceras["Content-Type"])
+        html = cuerpo.decode("utf-8")
+        for grupo in GRUPOS:
+            self.assertIn(grupo, html)
+            self.assertIn(reporte["metricas"][grupo]["nombre"], html)
+        self.assertIn(reporte["timestamp"], html)
+        self.assertIn("Numerador", html)
+        self.assertIn("Denominador", html)
+        self.assertIn("Estado", html)
+        self.assertIn(f"/portal/runs/{RUN}/metrics/g1-g7.json", html)
+
+        estado, cabeceras, cuerpo = self._get(
+            f"/portal/runs/{RUN}/metrics/g1-g7.json"
+        )
+        self.assertEqual(estado, 200)
+        self.assertEqual(cabeceras["Content-Type"], "application/json; charset=utf-8")
+        datos = json.loads(cuerpo)
+        self.assertEqual(datos["schema"], "p6-07/1")
+        self.assertEqual(datos["run_id"], RUN)
+        self.assertEqual(list(datos["metricas"]), list(GRUPOS))
+        for grupo in GRUPOS:
+            metrica = datos["metricas"][grupo]
+            for campo in (
+                "valor", "unidad", "numerador", "denominador", "estado",
+                "timestamp",
+            ):
+                self.assertIn(campo, metrica)
+            self.assertEqual(metrica["timestamp"], reporte["timestamp"])
+
+        # Los conteos auxiliares siguen siendo un recurso distinto y no se
+        # presentan como G1-G7.
+        estado, _, cuerpo = self._get(f"/portal/runs/{RUN}/metrics")
+        self.assertEqual(estado, 200)
+        conteos = json.loads(cuerpo)
+        self.assertEqual(conteos["schema"], "p6-08/metrics/1")
+        self.assertNotIn("metricas", conteos)
+        self.assertNotIn("G1", conteos)
+
+    def test_sin_reporte_g1_g7_no_fabrica_metricas(self):
+        self.assertIsNone(reporte_metricas(self.root, RUN))
+        estado, _, cuerpo = self._get(f"/portal/runs/{RUN}/metrics/g1-g7")
+        self.assertEqual(estado, 200)
+        html = cuerpo.decode("utf-8")
+        self.assertIn("Sin reporte G1-G7", html)
+        self.assertNotIn("<td>G1</td>", html)
+        self.assertIn("no fabrica metricas", html)
+
+        estado, _, cuerpo = self._get(f"/portal/runs/{RUN}/metrics/g1-g7.json")
+        self.assertEqual(estado, 404)
+        datos = json.loads(cuerpo)
+        self.assertFalse(datos["disponible"])
+        self.assertEqual(datos["schema"], "p6-08/g1-g7/1")
+        self.assertIn("no hay reporte", datos["motivo"])
+        self.assertNotIn("metricas", datos)
+        self.assertNotIn("G1", datos)
+
+        base_sin = self._iniciar(metricas=False)
+        estado, _, cuerpo = self._get(
+            f"/portal/runs/{RUN}/metrics/g1-g7.json", base=base_sin
+        )
+        self.assertEqual(estado, 404)
+        self.assertFalse(json.loads(cuerpo)["disponible"])
+
+    def test_reporte_g1_g7_json_invalido_o_schema_incorrecto(self):
+        ruta = self.root / "metricas" / f"{RUN}-final.json"
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        ruta.write_text("{esto no es json", encoding="utf-8")
+        with self.assertRaises(ErrorPortal):
+            reporte_metricas(self.root, RUN)
+        estado, _, cuerpo = self._get(f"/portal/runs/{RUN}/metrics/g1-g7.json")
+        self.assertEqual(estado, 422)
+        datos = json.loads(cuerpo)
+        self.assertFalse(datos["disponible"])
+        self.assertIn("no legible", datos["error"])
+        self.assertNotIn("metricas", datos)
+        estado, _, cuerpo = self._get(f"/portal/runs/{RUN}/metrics/g1-g7")
+        self.assertEqual(estado, 422)
+        self.assertIn("reporte de metricas", cuerpo.decode("utf-8"))
+
+        invalido = {
+            "schema": "otro/1",
+            "run_id": RUN,
+            "metricas": {grupo: {} for grupo in GRUPOS},
+        }
+        ruta.write_text(json.dumps(invalido), encoding="utf-8")
+        estado, _, cuerpo = self._get(f"/portal/runs/{RUN}/metrics/g1-g7.json")
+        self.assertEqual(estado, 422)
+        self.assertIn("schema", json.loads(cuerpo)["error"])
+
+        invalido["schema"] = "p6-07/1"
+        invalido["run_id"] = "otra-corrida"
+        ruta.write_text(json.dumps(invalido), encoding="utf-8")
+        estado, _, cuerpo = self._get(f"/portal/runs/{RUN}/metrics/g1-g7.json")
+        self.assertEqual(estado, 422)
+        self.assertIn("run_id", json.loads(cuerpo)["error"])
+
+    def test_metrics_dir_alternativo(self):
+        _, ruta = self._escribir_reporte()
+        externo = Path(tempfile.mkdtemp(dir=self.root.parent))
+        self.addCleanup(shutil.rmtree, externo, True)
+        ruta.replace(externo / ruta.name)
+        self.assertIsNone(reporte_metricas(self.root, RUN))
+        base = self._iniciar(metricas=True, metrics_dir=externo)
+        estado, _, cuerpo = self._get(
+            f"/portal/runs/{RUN}/metrics/g1-g7.json", base=base
+        )
+        self.assertEqual(estado, 200)
+        self.assertEqual(json.loads(cuerpo)["run_id"], RUN)
 
     def test_alertas_y_eventos_individuales(self):
         alerta = self.alertas[0]
