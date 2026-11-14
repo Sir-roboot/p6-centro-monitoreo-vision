@@ -1,8 +1,8 @@
 """P6-09: comprobacion local de las demostraciones C1/C2 ya persistidas.
 
 Estas pruebas no capturan video, no ejecutan el detector y no modifican
-artefactos. Se saltan en un clon limpio porque ``datos_locales/`` esta ignorado
-por Git y los JPEG/JSONL permanecen solo en la laptop.
+artefactos. La evidencia seleccionada de C1/C2 esta versionada; solo se saltan
+si faltan sus archivos en la copia bajo prueba.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ def _artefactos_disponibles() -> bool:
 
 @unittest.skipUnless(
     _artefactos_disponibles(),
-    "datos_locales/ local no disponible; evidencia P6-09 no versionada",
+    "Evidencia C1/C2 no disponible en esta copia",
 )
 class VerificacionDemostracionesP609(unittest.TestCase):
     def test_c1_documentada_es_coherente(self) -> None:

@@ -1,0 +1,305 @@
+{
+  "generated_at": "2026-11-14T05:19:31.583759+00:00",
+  "inputs": {
+    "alertas": {
+      "registros": 11,
+      "ruta": "datos_locales\\alertas\\p6-09-video-20261113-230341.jsonl",
+      "sha256": "2a448b780107a99946e8a58f0ecfd36c8c8ad2a46dd2c9d7c7200f92bbabb3f6"
+    },
+    "eventos": {
+      "registros": 10,
+      "ruta": "datos_locales\\eventos\\p6-09-video-20261113-230341.jsonl",
+      "sha256": "1b97abc30b25e6685779244a1b45bcb8e8cd125600a933adfca76c297537afc1"
+    },
+    "observaciones": {
+      "registros": 138,
+      "ruta": "datos_locales\\observaciones\\p6-09-video-20261113-230341.jsonl",
+      "sha256": "5dc7a7ba1e0b72db8db8b8f62b3c0ec8bd06ee93f87b8f647ebcce822171b1a7"
+    },
+    "root": "C:\\Users\\santi\\OneDrive - ITESO\\documentos_que_eran_de_escritorio\\santiago\\servicios_de_aprendizaje_automatico\\proyecto6-santiago\\datos_locales"
+  },
+  "limitaciones": [
+    "Las metricas describen artefactos persistidos; no miden exactitud ni calidad predictiva y no sustituyen C1/C2.",
+    "Un denominador cero produce valor nulo y estado sin_datos; no equivale a normalidad ni a exito.",
+    "G3 es una medida instantanea del disco accesible por --root.",
+    "G6 solo usa timestamps de observaciones de una corrida; no prueba continuidad de la fuente.",
+    "G7 mide occurred_at -> generated_at por alerta triggered; al generar por lotes incluye la espera de procesamiento y no es latencia en tiempo real ni recuperacion.",
+    "Los umbrales de confianza de P6-04 siguen siendo exploratorios."
+  ],
+  "metric_ids": [
+    "G1",
+    "G2",
+    "G3",
+    "G4",
+    "G5",
+    "G6",
+    "G7"
+  ],
+  "metricas": {
+    "G1": {
+      "ausencias": [],
+      "denominador": 10,
+      "denominador_explicito": true,
+      "division_por_cero": "valor_nulo_y_estado_sin_datos",
+      "estado": "ok",
+      "evidencia": {
+        "detector_calls": 10,
+        "detector_errors": 0,
+        "frames_sampled": 10
+      },
+      "exclusiones": "Cuadros descartados por muestreo y errores de lectura no entran al numerador ni al denominador.",
+      "formula": "detector_errors / frames_sampled",
+      "fuente": "observaciones",
+      "grupo": "Salud y rendimiento del servicio",
+      "id": "G1",
+      "nombre": "Tasa de errores tecnicos de inferencia",
+      "numerador": 0,
+      "poblacion": "Cuadros muestreados que llegan al detector en la corrida.",
+      "timestamp": "2026-11-14T05:19:31.583759+00:00",
+      "unidad": "ratio (errores / cuadros muestreados)",
+      "valor": 0.0,
+      "ventana": "Corrida completa del resumen P6-03.",
+      "zero_safe": true
+    },
+    "G2": {
+      "ausencias": [],
+      "denominador": 136,
+      "denominador_explicito": true,
+      "division_por_cero": "valor_nulo_y_estado_sin_datos",
+      "estado": "ok",
+      "evidencia": {
+        "frames_discarded": 126,
+        "frames_processed": 10,
+        "frames_received": 136
+      },
+      "exclusiones": "Los descartes se cuentan una vez; los errores de lectura se reportan aparte y no se mezclan con el muestreo.",
+      "formula": "frames_discarded / frames_received",
+      "fuente": "observaciones",
+      "grupo": "Captura y procesamiento del stream",
+      "id": "G2",
+      "nombre": "Tasa de cuadros descartados por la aplicacion",
+      "numerador": 126,
+      "poblacion": "Todos los cuadros recibidos por la fuente en la corrida.",
+      "timestamp": "2026-11-14T05:19:31.583759+00:00",
+      "unidad": "ratio (descartes / cuadros recibidos)",
+      "valor": 0.926471,
+      "ventana": "Corrida completa del resumen P6-03.",
+      "zero_safe": true
+    },
+    "G3": {
+      "ausencias": [],
+      "denominador": 511040286720,
+      "denominador_explicito": true,
+      "division_por_cero": "valor_nulo_y_estado_sin_datos",
+      "estado": "ok",
+      "evidencia": {
+        "free_bytes": 157843542016,
+        "path": "C:\\Users\\santi\\OneDrive - ITESO\\documentos_que_eran_de_escritorio\\santiago\\servicios_de_aprendizaje_automatico\\proyecto6-santiago\\datos_locales",
+        "total_bytes": 511040286720,
+        "used_bytes": 353196744704
+      },
+      "exclusiones": "No mide CPU ni RAM; solo el disco accesible por el proceso. No es una prediccion de agotamiento.",
+      "formula": "free_bytes / total_bytes",
+      "fuente": "sistema de archivos de --root",
+      "grupo": "Uso de recursos",
+      "id": "G3",
+      "nombre": "Proporcion de disco disponible",
+      "numerador": 157843542016,
+      "poblacion": "Sistema de archivos que contiene --root en el instante de calculo.",
+      "timestamp": "2026-11-14T05:19:31.583759+00:00",
+      "unidad": "ratio (bytes libres / bytes totales)",
+      "valor": 0.308867,
+      "ventana": "Instante de generated_at; es una medida instantanea.",
+      "zero_safe": true
+    },
+    "G4": {
+      "ausencias": [],
+      "denominador": 217,
+      "denominador_explicito": true,
+      "division_por_cero": "valor_nulo_y_estado_sin_datos",
+      "estado": "ok",
+      "evidencia": {
+        "detecciones_total": 217,
+        "eventos": 10,
+        "zonas": {
+          "accepted": 53,
+          "doubt": 104,
+          "low": 60
+        }
+      },
+      "exclusiones": "Eventos no puntuados, sin detecciones o con error tecnico no aportan zonas. No se reclasifican puntuaciones de P6-04.",
+      "formula": "detecciones_low / detecciones_puntuadas",
+      "fuente": "eventos",
+      "grupo": "Comportamiento de las predicciones",
+      "id": "G4",
+      "nombre": "Proporcion de detecciones en zona low",
+      "numerador": 60,
+      "poblacion": "Detecciones puntuadas dentro de events[].zones de P6-05.",
+      "timestamp": "2026-11-14T05:19:31.583759+00:00",
+      "unidad": "ratio (detecciones low / detecciones puntuadas)",
+      "valor": 0.276498,
+      "ventana": "Eventos persistidos de la corrida; no se unen corridas.",
+      "zero_safe": true
+    },
+    "G5": {
+      "ausencias": [],
+      "denominador": 10,
+      "denominador_explicito": true,
+      "division_por_cero": "valor_nulo_y_estado_sin_datos",
+      "estado": "ok",
+      "evidencia": {
+        "eventos": 10,
+        "eventos_incompletos": 0,
+        "eventos_trazables": 10,
+        "ids_incompletos": []
+      },
+      "exclusiones": "Las referencias se validan como campos no vacios; la verificacion criptografica de archivos corresponde a verificar_evidencia_alertas.",
+      "formula": "eventos_con_referencias_completas / eventos_persistidos",
+      "fuente": "eventos",
+      "grupo": "Datos y trazabilidad",
+      "id": "G5",
+      "nombre": "Cobertura de trazabilidad de eventos",
+      "numerador": 10,
+      "poblacion": "Eventos P6-05 con event_id, frame_id, observation_id, occurred_at y capture.path/capture.sha256.",
+      "timestamp": "2026-11-14T05:19:31.583759+00:00",
+      "unidad": "ratio (eventos trazables / eventos persistidos)",
+      "valor": 1.0,
+      "ventana": "Corrida completa; no se verifican los bytes de cada captura aqui.",
+      "zero_safe": true
+    },
+    "G6": {
+      "ausencias": [],
+      "denominador": 1,
+      "denominador_explicito": true,
+      "division_por_cero": "valor_nulo_y_estado_sin_datos",
+      "estado": "ok",
+      "evidencia": {
+        "observaciones_con_timestamp": 136,
+        "ultimo_received_at": "2026-11-14T05:03:55.469330+00:00"
+      },
+      "exclusiones": "No se estima la frecuencia ni la salud de la fuente. Un solo reporte no demuestra continuidad.",
+      "formula": "generated_at - max(received_at); denominador unitario = 1",
+      "fuente": "observaciones",
+      "grupo": "Dispositivos, fuentes y versiones",
+      "id": "G6",
+      "nombre": "Antiguedad del ultimo reporte de observacion",
+      "numerador": 936.114,
+      "poblacion": "Observaciones P6-03 de la corrida con received_at ISO 8601.",
+      "timestamp": "2026-11-14T05:19:31.583759+00:00",
+      "unidad": "segundos",
+      "valor": 936.114,
+      "ventana": "Desde el ultimo reporte hasta generated_at.",
+      "zero_safe": true
+    },
+    "G7": {
+      "ausencias": [],
+      "denominador": 10,
+      "denominador_explicito": true,
+      "division_por_cero": "valor_nulo_y_estado_sin_datos",
+      "estado": "ok",
+      "evidencia": {
+        "alertas_persistidas": 10,
+        "alertas_triggered": 10,
+        "alertas_validas": 10,
+        "ausentes": [],
+        "diferencias_negativas": [],
+        "invalidas": [],
+        "muestra_primaria": [
+          {
+            "alert_id": "p6-06-9315e32c6233ef3e8d86167f01899f8c",
+            "generated_at": "2026-11-14T05:03:55.846385+00:00",
+            "occurred_at": "2026-11-14T05:03:42.580010+00:00",
+            "segundos": 13.266375
+          },
+          {
+            "alert_id": "p6-06-8d6bf3a8cc27e8b8b440a32130370e4f",
+            "generated_at": "2026-11-14T05:03:55.846385+00:00",
+            "occurred_at": "2026-11-14T05:03:43.998663+00:00",
+            "segundos": 11.847722
+          },
+          {
+            "alert_id": "p6-06-78755c44048d0359524c4371aaafb526",
+            "generated_at": "2026-11-14T05:03:55.846385+00:00",
+            "occurred_at": "2026-11-14T05:03:45.591148+00:00",
+            "segundos": 10.255237
+          },
+          {
+            "alert_id": "p6-06-2e0895dba43d8b2dd447cbecbc9681cc",
+            "generated_at": "2026-11-14T05:03:55.846385+00:00",
+            "occurred_at": "2026-11-14T05:03:47.426308+00:00",
+            "segundos": 8.420077
+          },
+          {
+            "alert_id": "p6-06-4fb9ef3d018b626318842af8cba65d69",
+            "generated_at": "2026-11-14T05:03:55.846385+00:00",
+            "occurred_at": "2026-11-14T05:03:48.965964+00:00",
+            "segundos": 6.880421
+          },
+          {
+            "alert_id": "p6-06-900dfc874c5701d1559e930681d3dfdf",
+            "generated_at": "2026-11-14T05:03:55.846385+00:00",
+            "occurred_at": "2026-11-14T05:03:50.495556+00:00",
+            "segundos": 5.350829
+          },
+          {
+            "alert_id": "p6-06-8d11908042d2048ce160189217640fc5",
+            "generated_at": "2026-11-14T05:03:55.846385+00:00",
+            "occurred_at": "2026-11-14T05:03:51.793665+00:00",
+            "segundos": 4.05272
+          },
+          {
+            "alert_id": "p6-06-12487f062f1519729cef7a120938b6f6",
+            "generated_at": "2026-11-14T05:03:55.846385+00:00",
+            "occurred_at": "2026-11-14T05:03:52.933503+00:00",
+            "segundos": 2.912882
+          },
+          {
+            "alert_id": "p6-06-86e2ffa459c1329134af3ef29ce68e83",
+            "generated_at": "2026-11-14T05:03:55.846385+00:00",
+            "occurred_at": "2026-11-14T05:03:54.236166+00:00",
+            "segundos": 1.610219
+          },
+          {
+            "alert_id": "p6-06-b5d427c8262a2e1f51f2974b5fb2560d",
+            "generated_at": "2026-11-14T05:03:55.846385+00:00",
+            "occurred_at": "2026-11-14T05:03:55.469330+00:00",
+            "segundos": 0.377055
+          }
+        ],
+        "num_ausentes": 0,
+        "num_diferencias_negativas": 0,
+        "num_invalidas": 0,
+        "occurrence_state": {
+          "triggered": 10
+        },
+        "por_regla": {
+          "p6-06-low-confidence": 10
+        },
+        "por_severidad": {
+          "warning": 10
+        },
+        "segundos_totales": 64.973537
+      },
+      "exclusiones": "El sistema genera alertas por lotes: el delta incluye la espera hasta procesar el lote. No es latencia en tiempo real, no mide reconocimiento ni recuperacion, y no hay ciclo de vida activa/resuelta. Se excluyen alertas informational, timestamps ausentes o invalidos y deltas negativos.",
+      "formula": "suma(segundos(generated_at - occurred_at)) / alertas_triggered_con_timestamps_validos; cada delta debe ser >= 0",
+      "fuente": "alertas",
+      "grupo": "Alertas, recuperacion y costos",
+      "id": "G7",
+      "nombre": "Tiempo medio de deteccion",
+      "numerador": 64.973537,
+      "poblacion": "Alertas record=alert de P6-06 con occurrence_state=triggered, occurred_at y generated_at ISO 8601 parseables y delta no negativo.",
+      "timestamp": "2026-11-14T05:19:31.583759+00:00",
+      "unidad": "segundos (promedio por alerta triggered valida)",
+      "valor": 6.497354,
+      "ventana": "Desde occurred_at del evento primario hasta generated_at del lote que produjo la alerta.",
+      "zero_safe": true
+    }
+  },
+  "run_id": "p6-09-video-20261113-230341",
+  "run_ids": [
+    "p6-09-video-20261113-230341"
+  ],
+  "schema": "p6-07/1",
+  "timestamp": "2026-11-14T05:19:31.583759+00:00",
+  "version": "p6-07"
+}

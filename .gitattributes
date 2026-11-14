@@ -1,0 +1,2 @@
+# Conservar los bytes de las evidencias: sus SHA-256 se verifican literalmente.
+datos_locales/** -text

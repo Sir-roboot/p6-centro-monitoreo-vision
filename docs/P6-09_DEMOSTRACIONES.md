@@ -4,8 +4,9 @@ Fecha de documentación: **2026-11-13 (local) / 2026-11-14 UTC**.
 Issue: **#9 (P6-09)**. Este documento describe dos corridas ya realizadas y
 persistidas en la laptop. **No vuelve a capturar, no reejecuta el detector, no
 recalcula scores y no cambia umbrales, eventos ni alertas.** La evidencia
-primaria son los artefactos locales; el repositorio solo versiona este texto y
-un verificador de solo lectura.
+primaria son los artefactos de C1/C2, ahora versionados junto con este texto y
+un verificador de solo lectura. Se publicaron después de la corrida, sin editar
+su contenido.
 
 ## Veredicto honesto
 
@@ -47,11 +48,12 @@ laptop y capturado por un grabador local de pantalla fuera de este repositorio:
 - `source.kind`: `stream`; `source.id`: `monitor-video`
 
 La URL pública se cita solo como procedencia. Su disponibilidad, contenido y
-derechos pueden cambiar; el video no se redistribuye. Los cuadros JPEG, los
-JSONL, la política generada y los reportes permanecen **solo en la laptop** y
-están excluidos por `.gitignore` (`datos_locales/`, `models/`, `*.mp4`, etc.).
-Un clon limpio del repositorio no puede reconstruir estas corridas sin esos
-artefactos y sin el modelo.
+derechos pueden cambiar; el video completo no se redistribuye. Se versionaron
+las 20 capturas JPEG seleccionadas, los JSONL, las políticas y los reportes de
+C1/C2 en `datos_locales/`, aunque esa carpeta ignore otros archivos locales.
+Un clon limpio puede inspeccionar y verificar estas corridas sin cargar el
+modelo; para repetir la inferencia desde el video se necesita la fuente y el
+modelo original.
 
 Cadena efectiva:
 
@@ -322,8 +324,8 @@ de los extremos:
 | C2 | `capturas/9105c7d7c1601794/000001.jpg` | `f07221c223b2251ba1e9e11d7cb3f084e7370d970c481dab0a3e26c07bbe94e1` |
 | C2 | último JPEG de la corrida | `0f79a181e9a80be94063501dac0d00ecf095406fe4065788685c94ffa10c7c54` |
 
-Los JPEG y JSONL **no se suben** al repositorio. Los hashes permiten comprobar
-la copia local, no redistribuir los cuadros.
+Los 20 JPEG y sus JSONL **sí están en el repositorio**. Los hashes permiten
+comprobar que los archivos recibidos coinciden con los registros de eventos.
 
 ## Portal local (solo lectura)
 
@@ -413,7 +415,7 @@ Para volver a comprobar la documentación en esta laptop:
 # 3. Portal local con métricas persistidas
 .\\.venv\\Scripts\\python.exe .\\portal.py --root .\\datos_locales --port 8080 --metrics
 
-# 4. Pruebas (las de P6-09 se omiten si no existen los artefactos locales)
+# 4. Pruebas (las de P6-09 usan la evidencia versionada)
 .\\.venv\\Scripts\\python.exe -m unittest discover -s tests -v
 ```
 
@@ -443,9 +445,9 @@ Límites que deben acompañar cualquier lectura de este documento:
    del momento de cálculo; C2 tiene G6 alto porque el reporte se generó después.
 8. **Misma fuente y configuración:** C1 y C2 no son experimentos
    independientes; comparten modelo, política, referencia y tipo de señal.
-9. **Sin datos versionados:** un clon limpio no tiene los JPEG/JSONL ni el
-   modelo. El repositorio solo puede ejecutar las pruebas que se omiten o usan
-   fixtures; no puede reconstruir la evidencia real.
+9. **Sin video ni pesos versionados:** el clon tiene los JPEG/JSONL de C1/C2 y
+   puede verificar su integridad y trazabilidad, pero no repetir la captura ni
+   la inferencia idéntica desde la fuente audiovisual sin obtener el modelo.
 10. **Commit no persistido:** los JSONL no guardan el hash del commit; `8b23b31`
     es la referencia de redacción, no un campo verificable del artefacto.
 11. **Derechos de la fuente:** el video público se cita como procedencia; no se

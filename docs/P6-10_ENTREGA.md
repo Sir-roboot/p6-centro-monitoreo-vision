@@ -10,9 +10,10 @@ resultados observados, no como autoría exclusiva de escritura manual.
 
 > **Alcance honesto.** En el clon se ejecutó una **nueva corrida real** de la
 > cadena completa, pero no se reprodujeron idénticos cuadros de C1/C2. La
-> señal MJPEG, el video de origen y la referencia de política son recursos
-> externos al repositorio. Sus JSONL y JPEG permanecen locales e ignorados por
-> Git; un evaluador remoto no puede verificar los originales sin recibirlos.
+> señal MJPEG y el video de origen son recursos externos al repositorio. La
+> revisión histórica de este documento ocurrió antes de publicar la evidencia;
+> los JSONL, JPEG, políticas y reportes originales de C1/C2 ahora sí están en
+> Git y pueden verificarse sin volver a capturar el video.
 
 ## Entorno y dependencias
 
@@ -29,8 +30,9 @@ resultados observados, no como autoría exclusiva de escritura manual.
 Se creó un `.venv` nuevo en el clon y se instalaron exactamente las dos
 dependencias declaradas. El primer intento de instalación falló por el
 aislamiento de red del entorno; al permitir la conexión, la instalación
-terminó correctamente. `.venv/`, `models/` y `datos_locales/` están ignorados
-por Git.
+terminó correctamente. `.venv/` y `models/` están ignorados por Git. La carpeta
+`datos_locales/` ignora archivos nuevos, pero conserva versionada la evidencia
+seleccionada de C1/C2.
 
 ```powershell
 git clone https://github.com/Sir-roboot/p6-centro-monitoreo-vision.git p6-evaluacion
@@ -53,10 +55,10 @@ Salida real: `5185c1c9afebd142be9a0a26382f06d1f129fca8`, `Python 3.14.3`,
 
 Resultado real desde el entorno recién instalado: **`Ran 146 tests in 17.331s` · `OK (skipped=3)`**.
 
-Las tres omisiones son `test_p6_09_demostraciones` y declaran
-`datos_locales/ local no disponible; evidencia P6-09 no versionada`; no son
-fallos. El README cita 129 pruebas en una sección histórica de P6-04; el
-conteo vigente de este commit es 146.
+En aquel clon, anterior a la publicación de la evidencia, las tres omisiones
+eran pruebas de `test_p6_09_demostraciones` por ausencia de los archivos C1/C2;
+no fueron fallos. Con los artefactos ahora versionados, esas pruebas pueden
+ejecutarse en un clon nuevo. El conteo de la suite es 146.
 
 ## Modelo oficial y SHA-256
 
@@ -143,26 +145,27 @@ baja confianza; no constituyen una C1 libre de alertas.
 ## Matriz R1–R7 de la rúbrica docente
 
 Esta tabla usa **los nombres de la rúbrica**, no identifica puntos concedidos:
-la calificación corresponde al evaluador. «Local» significa que la evidencia
-primaria no está disponible al clonar Git.
+la calificación corresponde al evaluador. La evidencia primaria seleccionada
+de C1/C2 está disponible al clonar Git; la nueva corrida P6-10 permanece local.
 
 | Criterio | Evidencia y verificación | Límite |
 | --- | --- | --- |
 | R1 · Fuente visual y modelo | [Fuente](P6-01_FUENTE.md), [detector](P6-02_DETECTOR.md), [observaciones](P6-03_OBSERVACIONES.md); pesos oficiales y SHA comprobados en clon; nueva corrida real abajo | La secuencia sintética no sustituye C1/C2 |
 | R2 · Métricas G1–G7 | [Definiciones y recálculo](P6-07_METRICAS.md); reporte de la nueva corrida abajo y [portal](P6-08_PORTAL.md) | G3 varía por equipo; G6/G7 por hora del reporte; no miden exactitud |
-| R3 · Umbrales y monitoreo | [Política](P6-04_CONFIANZA.md), referencia local y umbrales 0.17/0.61 persistidos en las corridas | Referencia exploratoria, `robust_reference=false` |
-| R4 · Eventos e imágenes | [Contrato](P6-05_EVENTOS.md); 10 eventos y 10 capturas de la nueva corrida, hashes verificados | JPEG originales no versionados |
+| R3 · Umbrales y monitoreo | [Política](P6-04_CONFIANZA.md), referencia versionada y umbrales 0.17/0.61 persistidos en las corridas | Referencia exploratoria, `robust_reference=false` |
+| R4 · Eventos e imágenes | [Contrato](P6-05_EVENTOS.md); 20 eventos y 20 capturas originales de C1/C2 versionados y verificables | La nueva corrida P6-10 permanece local |
 | R5 · Alertas | [Reglas](P6-06_ALERTAS.md); 10 alertas reales de baja confianza, 10 vínculos verificados y consulta [portal](P6-08_PORTAL.md) | No se afirma cambio sostenido ni recuperación |
-| R6 · C1/C2 | [Demostraciones originales](P6-09_DEMOSTRACIONES.md) y nueva corrida real abajo | C1 también alertó; originales no reproducibles idénticos desde Git |
-| R7 · Git y reproducibilidad | [README](../README.md), este índice, instalación y suite desde clon limpio | Artefactos originales solo en laptop |
+| R6 · C1/C2 | [Demostraciones originales](P6-09_DEMOSTRACIONES.md) y nueva corrida real abajo | C1 también alertó; no se puede repetir la captura idéntica desde Git |
+| R7 · Git y reproducibilidad | [README](../README.md), este índice, instalación y suite desde clon limpio | Video completo y pesos no versionados |
 
 ## Matriz G1–G7
 
 Definiciones y fórmulas: [`docs/P6-07_METRICAS.md`](P6-07_METRICAS.md). Los
 valores originales de C1/C2 están documentados en
 [`docs/P6-09_DEMOSTRACIONES.md`](P6-09_DEMOSTRACIONES.md). Esos valores no se
-recalcularon en el clon porque faltan sus artefactos; **sí se calculó un nuevo
-reporte G1–G7** para `p6-10-repro-20261113-234003` como se indica arriba.
+recalcularon en aquel clon porque todavía faltaban sus artefactos. Ahora están
+versionados para recálculo y verificación. También se calculó un nuevo reporte
+G1–G7 para `p6-10-repro-20261113-234003` como se indica arriba.
 
 | ID | Métrica base | Evidencia | Estado en clon limpio |
 | --- | --- | --- | --- |
@@ -189,9 +192,9 @@ precisión ni recall del detector.
 
 ## Limitaciones
 
-1. **C1/C2 originales no reproducidos idénticos:** sus JSONL, JPEG y referencia
-   son locales; el clon sí ejecutó una nueva corrida real usando la señal y
-   referencia externas, pero no puede comparar hashes de los originales.
+1. **C1/C2 no recapturados idénticamente:** sus JSONL, JPEG y referencia están
+   versionados y sus hashes son verificables. El clon histórico ejecutó una
+   nueva corrida real; repetir la captura original requiere video y grabador.
 2. **Muestra sintética:** 12 cuadros sin objetos COCO; no evalúa calidad del
    detector ni genera alertas.
 3. **Umbrales exploratorios:** 0.17/0.61 (C1/C2) y 0.30/0.70 (política base) no
@@ -200,8 +203,8 @@ precisión ni recall del detector.
 5. **G3 y G6 son instantáneas** y dependen del equipo y del momento de cálculo.
 6. **Dependencia de red** para crear un entorno nuevo o descargar los pesos; la
    suite en sí no usa red.
-7. **Tres pruebas omitidas** por ausencia de artefactos P6-09 locales; no deben
-   interpretarse como verificación superada.
+7. **Omisiones históricas:** tres pruebas se omitieron en el clon anterior a la
+   publicación de C1/C2; no deben interpretarse como verificación superada.
 
 ## Extras reclamados
 
@@ -213,13 +216,12 @@ demostrada en este commit.
 
 - Señal `http://127.0.0.1:8765/stream.mjpg` y grabador de pantalla fuera del
   repositorio, más el video público de origen.
-- `datos_locales/` con observaciones, políticas, eventos, capturas, alertas y
-  reportes de C1/C2, incluida la referencia
-  `monitor-p6-04-20261113-214440.jsonl`.
+- Los artefactos de la nueva corrida `p6-10-repro-20261113-234003`, que siguen
+  locales; los originales de C1/C2 y su referencia están en Git.
 - Pesos en `models/yolox_tiny.onnx` (recuperables por URL y SHA, pero no
   versionados) para repetir inferencia sin red.
-- Para recalcular G1–G7 de C1/C2: los JSONL/alertas originales y el mismo
-  `--generated-at`; de lo contrario los valores cambian.
+- Para recalcular G1–G7 de C1/C2 con el mismo valor temporal, usar los JSONL
+  versionados y el `--generated-at` registrado; de otro modo esos valores cambian.
 
 ## Cierre
 
@@ -230,4 +232,4 @@ demostrada en este commit.
       alertas, métricas y portal comprobados sin alterar los originales.
 - [x] R1–R7 y G1–G7 documentados con enlaces, sin inventar valores.
 - [x] Autoría, procedencia, limitaciones y extras declarados.
-- [x] Sin credenciales y sin artefactos locales versionados.
+- [x] Sin credenciales; se versionó solo la evidencia seleccionada de C1/C2.

@@ -4,8 +4,9 @@ Proyecto individual de Santiago Ortiz para la materia Servicios de Aprendizaje
 Automático. Recibe video, ejecuta un detector real en CPU, persiste
 observaciones, eventos, capturas y alertas, calcula métricas G1–G7 y ofrece un
 portal local de consulta. Las demostraciones reales y sus límites se documentan
-en [docs/P6-09_DEMOSTRACIONES.md](docs/P6-09_DEMOSTRACIONES.md). Las capturas y
-resultados de ejecución permanecen en la laptop, no en Git.
+en [docs/P6-09_DEMOSTRACIONES.md](docs/P6-09_DEMOSTRACIONES.md). Las 20 capturas
+JPEG y los registros de C1/C2 están versionados en `datos_locales/`; las demás
+corridas, los pesos y el video original no se incluyen en Git.
 
 ## Estado y arquitectura actual
 
@@ -320,9 +321,10 @@ alertas o una precisión validada. Los umbrales 0.17/0.61 son exploratorios,
 derivados de observaciones de referencia; la confianza del detector no mide
 por sí sola exactitud ni cambio de distribución confirmado.
 
-Los JSONL, JPEG, reportes y pesos están excluidos por Git. Un evaluador con solo
-el repositorio puede ejecutar las pruebas y reconstruir la cadena con su propia
-fuente, pero no inspeccionar los artefactos locales originales ni reproducir
-idénticos cuadros sin el video y el grabador. El material de origen, claves y
-capturas privadas no deben agregarse al repositorio sin revisar sus permisos y
-contenido.
+Los JPEG, JSONL, políticas y reportes de C1/C2 se incluyen como evidencia
+académica en `datos_locales/`; sus hashes se comprueban con
+`verificar_demostracion.py`. Las demás corridas y los pesos siguen excluidos.
+Un evaluador puede inspeccionar y verificar los artefactos originales de C1/C2
+desde un clon, pero no volver a capturar idénticos cuadros sin el video y el
+grabador. No se incluyen claves ni el video completo. La fuente audiovisual
+pertenece a su titular y se cita en la guía de demostraciones.
