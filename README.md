@@ -2,9 +2,10 @@
 
 Proyecto individual de Santiago Ortiz para la materia Servicios de Aprendizaje
 Automático. Este repositorio está en **fase progresiva**: ya recibe video,
-ejecuta un detector real en CPU y persiste observaciones primarias versionadas,
-pero todavía no implementa métricas, eventos, alertas ni portal. No debe
-presentarse aún como entrega completa.
+ejecuta un detector real en CPU, persiste observaciones primarias versionadas y
+publica una política de confianza exploratoria, pero todavía no implementa
+métricas G1–G7, eventos, alertas ni portal. No debe presentarse aún como entrega
+completa.
 
 ## Estado y arquitectura actual
 
@@ -15,6 +16,7 @@ Video reproducido en la laptop
     → lector_opencv.py + fuente.py (este repositorio)
     → detectar_opencv.py + detector_yolox.py (YOLOX-Tiny COCO, CPU)
     → ejecutar_pipeline.py + observaciones.py (JSONL de P6-03)
+    → evaluar_confianza.py + politica_confianza.py (política P6-04)
     → futuras métricas, eventos, alertas y portal
 ```
 
@@ -152,6 +154,49 @@ estados de término y límites: [docs/P6-03_OBSERVACIONES.md](docs/P6-03_OBSERVA
 - Los cuadros sintéticos siguen siendo propios y no son evidencia de detección.
 - Detalle y límites: [docs/P6-02_DETECTOR.md](docs/P6-02_DETECTOR.md).
 
+## Política de confianza exploratoria (P6-04)
+
+`evaluar_confianza.py` lee un JSONL de P6-03 ya persistido y escribe un
+artefacto JSON versionado (`schema: p6-04/1`, `policy_id: p6-04-<huella>`) en
+`datos_locales/politicas/<run_id>-p6-04.json`. No carga el modelo, no vuelve a
+inferir, no aplica NMS y no crea eventos, alertas ni capturas.
+
+```powershell
+.\.venv\Scripts\python.exe evaluar_confianza.py --input .\datos_locales\observaciones\demo-p6-03.jsonl
+```
+
+La política clasifica cada detección puntuada con fronteras estrictas:
+`low` si `s < 0.30`, `doubt` si `0.30 <= s < 0.70` y `accepted` si
+`s >= 0.70`. **0.30/0.70 son exploratorios**: se basan en cinco puntuaciones
+reales (0.8840, 0.6717, 0.5386, 0.1594, 0.1128) de **una sola imagen
+`dog.jpg`** documentada en P6-02. No son una línea base válida para C1/C2 ni
+una calibración; el artefacto lo declara con `robust_reference: false`.
+
+El denominador son las **detecciones puntuadas post-filtro** ya persistidas, no
+los frames ni los eventos. El contrato heredado exige un piso de score de 0.10
+y NMS **class-agnostic** (0.45); si el piso persistido es estrictamente mayor
+que 0.10, las puntuaciones bajas pudieron descartarse antes y no se recuperan.
+La referencia externa se pasa con `--reference` y se evalúa aparte; sin ella se
+usa el primer bloque como referencia interna, que no es evidencia independiente.
+
+Las ventanas son consecutivas y no solapadas (5 frames muestreados por omisión,
+al menos 3 detecciones puntuadas). Un frame muestreado sin detección o con
+error interrumpe la ventana; un cuadro `discarded` por muestreo no ocupa lugar.
+No se unen tramos separados. Hay cambio sostenido si 2 ventanas completas
+consecutivas están degradadas: fracción `low >= 0.5` y caída de la media
+`>= 0.10` frente a la referencia. Los estados insuficientes
+(`insufficient_evidence`, `reference_incompatible`) **nunca** acreditan
+normalidad; `normality_established` solo puede ser `true` con
+`no_sustained_change` y no hay ventanas incompletas. P6-05 consumirá `p6_05_contract` sin reclasificar las
+puntuaciones.
+
+La corrida demo sobre la secuencia sintética no contiene objetos COCO: produce
+0 detecciones puntuadas, referencia `insufficient` y cambio
+`insufficient_evidence`; no demuestra zonas ni cambio sostenido. La última
+verificación local obtuvo **89 pruebas** correctas. Contrato completo, CLI,
+artefacto, estados y límites:
+[docs/P6-04_CONFIANZA.md](docs/P6-04_CONFIANZA.md).
+
 ## Entrada del monitor y video propio
 
 Coloca el video en pantalla completa en el monitor dedicado. En la primera
@@ -185,9 +230,13 @@ El contrato de salida para el detector está en [docs/P6-01_FUENTE.md](docs/P6-0
 
 - Definir C1/C2 con escenas reales reproducibles y permiso de uso confirmado;
   el detector ya está integrado, pero falta la evidencia de esas escenas.
-- Implementar confianza por zonas, referencia y cambio sostenido; distinguir
-  datos insuficientes de estado normal.
-- Registrar métricas G1–G7 aplicables, eventos, capturas y alertas persistentes.
+- Revisar y sustituir los umbrales exploratorios 0.30/0.70 de P6-04 con
+  evidencia de C1/C2; la política ya distingue insuficiencia de normalidad, pero
+  no acredita esas escenas.
+- Implementar P6-05 conforme a `p6_05_contract`: eventos, capturas y alertas
+  persistentes sin reclasificar puntuaciones ni crear normalidad con evidencia
+  insuficiente.
+- Registrar métricas G1–G7 aplicables sobre las observaciones y la política.
 - Construir consulta de eventos y alertas en el portal.
 - Documentar y ejecutar C1/C2 con evidencia vinculada al commit evaluado.
 
