@@ -1,12 +1,11 @@
 # P6 · Centro de monitoreo de visión
 
 Proyecto individual de Santiago Ortiz para la materia Servicios de Aprendizaje
-Automático. Este repositorio está en **fase progresiva**: ya recibe video,
-ejecuta un detector real en CPU, persiste observaciones primarias versionadas,
-publica una política de confianza exploratoria, persiste eventos/capturas y
-genera alertas P6-06 con reglas explícitas y evidencia verificable, y calcula
-métricas base G1–G7 recalculables, pero todavía no implementa el portal. No debe
-presentarse aún como entrega completa.
+Automático. Recibe video, ejecuta un detector real en CPU, persiste
+observaciones, eventos, capturas y alertas, calcula métricas G1–G7 y ofrece un
+portal local de consulta. Las demostraciones reales y sus límites se documentan
+en [docs/P6-09_DEMOSTRACIONES.md](docs/P6-09_DEMOSTRACIONES.md). Las capturas y
+resultados de ejecución permanecen en la laptop, no en Git.
 
 ## Estado y arquitectura actual
 
@@ -21,7 +20,7 @@ Video reproducido en la laptop
     → ejecutar_eventos.py + eventos.py (eventos y JPEG P6-05)
     → ejecutar_alertas.py + alertas.py (alertas persistentes P6-06)
     → calcular_metricas.py + metricas.py (reporte G1–G7 P6-07)
-    → portal (pendiente)
+    → portal.py (consulta local de eventos, alertas, capturas y métricas P6-08)
 ```
 
 El grabador está separado deliberadamente del Proyecto 6. Solo abre una señal
@@ -228,8 +227,7 @@ normalidad). El comando
 `.\\.venv\\Scripts\\python.exe .\\consultar_alertas.py --run-id $runId --verify`
 relee las alertas, exige igualdad exacta de cada `event_ref` con su evento
 (`policy_id` y captura incluidos) y comprueba los hashes de las capturas después
-de reiniciar. La vista de alertas del portal (R5.3) sigue pendiente; P6-06 deja
-un contrato de consulta. En la corrida local
+de reiniciar. El portal P6-08 permite consultarlas. En la corrida local
 `p6-05-verificacion-20261113-222520` se generaron 10 alertas `warning` de baja
 confianza con `no_sustained_change`, sin alertas críticas ni de insuficiencia;
 las 10 capturas y eventos se verificaron correctamente. Eso acredita C2 por
@@ -262,13 +260,25 @@ $runId = "p6-05-verificacion-20261113-222520"
 La selección base es: G1 errores técnicos entre cuadros muestreados, G2
 descartes entre cuadros recibidos, G3 disco disponible, G4 detecciones `low`
 entre detecciones puntuadas, G5 eventos trazables entre eventos persistidos, G6
-antigüedad del último reporte y G7 alertas `triggered` entre alertas
-persistidas. G3 es una lectura instantánea del disco y G6 depende de
-`--generated-at`; G7 usa `occurrence_state` como proxy porque P6-06 no modela un
-ciclo de vida. Estas métricas describen operación y evidencia, **no** exactitud
-del modelo.
+antigüedad del último reporte y G7 tiempo medio entre ocurrencia de alerta
+`triggered` y generación del reporte. G3 es una lectura instantánea del disco;
+G6 y G7 dependen de `--generated-at`. G7 es latencia de reporte por lote, **no**
+tiempo de notificación en vivo. Estas métricas describen operación y evidencia,
+**no** exactitud del modelo.
 Definiciones, ejemplo de recálculo manual y límites:
 [docs/P6-07_METRICAS.md](docs/P6-07_METRICAS.md).
+
+## Portal local (P6-08)
+
+Con los artefactos locales ya generados, inicia el visor de solo lectura:
+
+```powershell
+.\.venv\Scripts\python.exe .\portal.py --root .\datos_locales --port 8080 --metrics
+```
+
+Abre `http://127.0.0.1:8080/` para consultar corridas, eventos, alertas,
+capturas verificadas y reportes G1–G7. Solo escucha en `127.0.0.1`; no lo
+expongas por Internet. Detalles en [docs/P6-08_PORTAL.md](docs/P6-08_PORTAL.md).
 
 ## Entrada del monitor y video propio
 
@@ -294,26 +304,25 @@ Pulsa `q` con esa ventana activa o Ctrl+C para detener. Para no abrirla:
 También se puede indicar `--source ruta\a\video.mp4` para un archivo local
 autorizado. La fuente MJPEG no queda reproducible desde un clon aislado por sí
 sola: requiere el grabador y el video. La secuencia sintética sí verifica la
-entrada sin esos recursos, pero C1/C2 requerirán escenas reales accesibles.
+entrada sin esos recursos; los resultados C1/C2 documentados usan video real.
 Ni el lector ni el grabador guardan cuadros por sí mismos; el comando P6-05
 conserva solo los cuadros muestreados que pasan por inferencia.
 
 El contrato de salida para el detector está en [docs/P6-01_FUENTE.md](docs/P6-01_FUENTE.md).
 
-## Pendiente para la entrega
+## Demostraciones y límites
 
-- Definir C1/C2 con escenas reales reproducibles y permiso de uso confirmado;
-  el detector ya está integrado, pero falta la evidencia de esas escenas.
-- Revisar y sustituir los umbrales exploratorios 0.30/0.70 de P6-04 con
-  evidencia de C1/C2; la política ya distingue insuficiencia de normalidad, pero
-  no acredita esas escenas.
-- Validar las reglas P6-06 con escenas reales de C1/C2; la implementación ya
-  existe, pero sus umbrales y resultados todavía son exploratorios.
-- Registrar métricas adicionales del catálogo G1–G7 y sus umbrales; la base
-  P6-07 ya es recalculable, pero no cubre todo el catálogo.
-- Construir la consulta de eventos y alertas en el portal (R5.3); P6-06 solo
-  expone funciones y CLI locales.
-- Documentar y ejecutar C1/C2 con evidencia vinculada al commit evaluado.
+[P6-09](docs/P6-09_DEMOSTRACIONES.md) registra C1 y C2 ejecutados sobre video
+real con una configuración fija. Las dos corridas terminaron sin errores
+técnicos, pero ambas generaron alertas de baja confianza. En consecuencia, C1
+acredita el funcionamiento de la cadena técnica, **no** una escena libre de
+alertas o una precisión validada. Los umbrales 0.17/0.61 son exploratorios,
+derivados de observaciones de referencia; la confianza del detector no mide
+por sí sola exactitud ni cambio de distribución confirmado.
 
-El material de origen, claves y capturas privadas no deben agregarse al
-repositorio sin revisar sus permisos y contenido.
+Los JSONL, JPEG, reportes y pesos están excluidos por Git. Un evaluador con solo
+el repositorio puede ejecutar las pruebas y reconstruir la cadena con su propia
+fuente, pero no inspeccionar los artefactos locales originales ni reproducir
+idénticos cuadros sin el video y el grabador. El material de origen, claves y
+capturas privadas no deben agregarse al repositorio sin revisar sus permisos y
+contenido.
