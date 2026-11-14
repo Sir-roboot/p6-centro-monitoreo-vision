@@ -4,9 +4,9 @@ Proyecto individual de Santiago Ortiz para la materia Servicios de Aprendizaje
 Automático. Este repositorio está en **fase progresiva**: ya recibe video,
 ejecuta un detector real en CPU, persiste observaciones primarias versionadas,
 publica una política de confianza exploratoria, persiste eventos/capturas y
-genera alertas P6-06 con reglas explícitas y evidencia verificable, pero todavía
-no implementa métricas G1–G7 ni portal. No debe presentarse aún como entrega
-completa.
+genera alertas P6-06 con reglas explícitas y evidencia verificable, y calcula
+métricas base G1–G7 recalculables, pero todavía no implementa el portal. No debe
+presentarse aún como entrega completa.
 
 ## Estado y arquitectura actual
 
@@ -20,7 +20,8 @@ Video reproducido en la laptop
     → evaluar_confianza.py + politica_confianza.py (política P6-04)
     → ejecutar_eventos.py + eventos.py (eventos y JPEG P6-05)
     → ejecutar_alertas.py + alertas.py (alertas persistentes P6-06)
-    → futuras métricas y portal
+    → calcular_metricas.py + metricas.py (reporte G1–G7 P6-07)
+    → portal (pendiente)
 ```
 
 El grabador está separado deliberadamente del Proyecto 6. Solo abre una señal
@@ -196,7 +197,7 @@ puntuaciones de P6-04 sin reclasificarlas.
 La corrida demo sobre la secuencia sintética no contiene objetos COCO: produce
 0 detecciones puntuadas, referencia `insufficient` y cambio
 `insufficient_evidence`; no demuestra zonas ni cambio sostenido. La última
-verificación local obtuvo **105 pruebas** correctas. Contrato completo, CLI,
+verificación local obtuvo **129 pruebas** correctas. Contrato completo, CLI,
 artefacto, estados y límites:
 [docs/P6-04_CONFIANZA.md](docs/P6-04_CONFIANZA.md).
 
@@ -235,6 +236,39 @@ las 10 capturas y eventos se verificaron correctamente. Eso acredita C2 por
 alerta de baja confianza, **no** demuestra drift ni calidad del detector.
 Contrato, comandos, reglas y límites:
 [docs/P6-06_ALERTAS.md](docs/P6-06_ALERTAS.md).
+
+## Métricas base G1–G7 (P6-07)
+
+`metricas.py` lee los JSONL ya persistidos de observaciones, eventos y alertas,
+y calcula **una métrica base por grupo G1–G7** sin volver a inferir ni
+reclasificar zonas. `calcular_metricas.py` expone el cálculo por CLI y escribe un
+reporte JSON `p6-07/1` con numerador, denominador explícito, valor, estado,
+evidencia, ventana, exclusiones, ausencias e identificadores de los insumos.
+Cada razón es cero segura: denominador `0` produce `valor: null` y
+`estado: "sin_datos"`, nunca una división ni un cero saludable.
+
+Sobre la corrida `p6-05-verificacion-20261113-222520`, con un instante fijo:
+
+```powershell
+$runId = "p6-05-verificacion-20261113-222520"
+.\.venv\Scripts\python.exe .\calcular_metricas.py `
+  --observaciones ".\datos_locales\observaciones\$runId.jsonl" `
+  --eventos ".\datos_locales\eventos\$runId.jsonl" `
+  --alertas ".\datos_locales\alertas\$runId.jsonl" `
+  --root . --generated-at "2026-11-14T04:26:00+00:00" `
+  --output ".\datos_locales\reportes\p6-07-$runId.json"
+```
+
+La selección base es: G1 errores técnicos entre cuadros muestreados, G2
+descartes entre cuadros recibidos, G3 disco disponible, G4 detecciones `low`
+entre detecciones puntuadas, G5 eventos trazables entre eventos persistidos, G6
+antigüedad del último reporte y G7 alertas `triggered` entre alertas
+persistidas. G3 es una lectura instantánea del disco y G6 depende de
+`--generated-at`; G7 usa `occurrence_state` como proxy porque P6-06 no modela un
+ciclo de vida. Estas métricas describen operación y evidencia, **no** exactitud
+del modelo.
+Definiciones, ejemplo de recálculo manual y límites:
+[docs/P6-07_METRICAS.md](docs/P6-07_METRICAS.md).
 
 ## Entrada del monitor y video propio
 
@@ -275,7 +309,8 @@ El contrato de salida para el detector está en [docs/P6-01_FUENTE.md](docs/P6-0
   no acredita esas escenas.
 - Validar las reglas P6-06 con escenas reales de C1/C2; la implementación ya
   existe, pero sus umbrales y resultados todavía son exploratorios.
-- Registrar métricas G1–G7 aplicables sobre las observaciones y la política.
+- Registrar métricas adicionales del catálogo G1–G7 y sus umbrales; la base
+  P6-07 ya es recalculable, pero no cubre todo el catálogo.
 - Construir la consulta de eventos y alertas en el portal (R5.3); P6-06 solo
   expone funciones y CLI locales.
 - Documentar y ejecutar C1/C2 con evidencia vinculada al commit evaluado.
