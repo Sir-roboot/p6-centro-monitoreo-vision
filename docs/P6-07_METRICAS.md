@@ -50,7 +50,7 @@ Cada métrica incluye `id`, `grupo`, `nombre`, `unidad`, `formula`, `poblacion`,
 | G4 · Comportamiento de predicciones | Proporción de detecciones en zona `low` | `detecciones_low / detecciones_puntuadas` | ratio | `events[].zones` |
 | G5 · Datos y trazabilidad | Cobertura de trazabilidad de eventos | `eventos_trazables / eventos_persistidos` | ratio | eventos |
 | G6 · Dispositivos y fuentes | Antigüedad del último reporte de observación | `generated_at - max(received_at)` | segundos | observaciones |
-| G7 · Alertas y recuperación | Proporción de alertas con estado `triggered` | `triggered / alertas_persistidas` | ratio | alertas |
+| G7 · Alertas y recuperación | Tiempo medio de detección | `suma(segundos(generated_at - occurred_at)) / alertas_triggered_válidas` | segundos | alertas |
 
 ### G1 · Tasa de errores técnicos
 
@@ -107,16 +107,25 @@ Cada métrica incluye `id`, `grupo`, `nombre`, `unidad`, `formula`, `poblacion`,
 - **Ausencia:** sin timestamps parseables el valor es nulo. El denominador
   unitario (`1`) hace explícito que es una medida en segundos, no una razón.
 
-### G7 · Alertas `triggered`
+### G7 · Tiempo medio de detección
 
-- **Población:** registros `record: "alert"` del JSONL P6-06; el manifiesto se
-  excluye.
-- **Ventana:** corrida completa de alertas persistidas.
-- **Exclusión:** `occurrence_state` es inmutable y **no** un ciclo de vida
-  activa/resuelta. No hay reconocimiento, recuperación ni costos instrumentados.
-  Por eso esta métrica es un proxy auditable de alertas abiertas, no una medida
-  de tiempo de recuperación.
-- **Ausencia:** sin alertas persistidas el valor es nulo.
+- **Población:** alertas `record: "alert"` de P6-06 con
+  `occurrence_state: "triggered"`, `occurred_at` y `generated_at` ISO 8601
+  parseables y `generated_at >= occurred_at`; el manifiesto se excluye.
+- **Fórmula:** `suma(segundos(generated_at - occurred_at)) / alertas_triggered_válidas`.
+  El numerador suma segundos, el denominador cuenta alertas válidas y el valor
+  es nulo cuando no hay ninguna.
+- **Ventana:** desde `occurred_at` del evento primario hasta `generated_at` del
+  lote que produjo la alerta.
+- **Exclusión:** el sistema genera alertas **por lotes**, así que el delta
+  incluye la espera hasta procesar el lote. **No es latencia en tiempo real**
+  ni mide reconocimiento o recuperación: P6-06 no modela un ciclo de vida
+  activa/resuelta. Se excluyen alertas `informational`, timestamps ausentes o
+  inválidos y deltas negativos. `evidencia` enumera los IDs ausentes,
+  inválidos y negativos, y conserva una muestra primaria con `alert_id`,
+  timestamps y segundos.
+- **Ausencia:** sin alertas `triggered` con deltas válidos el numerador y el
+  valor son nulos, el estado es `sin_datos` y `ausencias` explica el motivo.
 
 ## Cero seguro
 
@@ -154,8 +163,20 @@ $zonas.low / ($zonas.accepted + $zonas.doubt + $zonas.low)
 
 Para G1 y G2 se usan los conteos del resumen P6-03; G6 usa el último
 `received_at` y el `timestamp` del reporte; G3 usa los bytes libres y totales
-del instante de cálculo; G5 y G7 cuentan eventos y alertas persistidas. Esos
-conteos también aparecen en `evidencia` o `inputs`.
+del instante de cálculo; G5 cuenta eventos persistidos. Para G7, cada alerta
+`triggered` válida aporta `segundos(generated_at - occurred_at)`. La corrida
+`p6-09-video-20261113-230341` tiene 10 alertas `triggered` válidas que suman
+64.973537 s:
+
+```text
+G7 = suma(segundos) / alertas_triggered_válidas
+   = 64.973537 / 10
+   = 6.497354
+```
+
+`evidencia.muestra_primaria` conserva los IDs, timestamps y segundos de la
+muestra para repetir la operación. Esos conteos también aparecen en `evidencia`
+o `inputs`.
 
 ## Resultado local de la corrida de referencia
 
@@ -169,13 +190,18 @@ Con `--generated-at 2026-11-14T04:26:00+00:00`:
 | G4 | 79 | 272 | 0.290441 |
 | G5 | 10 | 10 | 1.0 |
 | G6 | 27.04 s | 1 | 27.04 |
-| G7 | 10 | 10 | 1.0 |
+| G7 | sin deltas válidos | 0 | `null` |
 
 G2 alto es esperado: la corrida muestrea uno de cada varios cuadros, por lo que
-la mayoría de los cuadros recibidos se descarta por diseño. G1, G5 y G7 no
-acreditan calidad del modelo ni exactitud de las alertas. G3 depende del disco
-de la máquina y cambia entre ejecuciones; el valor anterior es solo una
-referencia local.
+la mayoría de los cuadros recibidos se descarta por diseño. En la corrida de
+referencia las 10 alertas `triggered` tienen `generated_at`
+(`2026-11-13T23:30:00+00:00`) anterior a `occurred_at` (`2026-11-14T04:25:2x`):
+los 10 deltas son negativos, se excluyen y G7 queda `sin_datos` en lugar de
+inventar un valor. La corrida `p6-09-video-20261113-230341` sí tiene timestamps
+consistentes y produce 6.497354 s. G1, G5 y G7 no acreditan calidad del modelo
+ni exactitud de las alertas; G7 tampoco mide recuperación ni latencia en tiempo
+real. G3 depende del disco de la máquina y cambia entre ejecuciones; el valor
+anterior es solo una referencia local.
 
 ## Pruebas
 

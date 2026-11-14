@@ -52,7 +52,14 @@ def _evento(event_id: str, zonas: list[str], *, capture: bool = True) -> dict:
     }
 
 
-def _alerta(alert_id: str, estado: str, severidad: str) -> dict:
+def _alerta(
+    alert_id: str,
+    estado: str,
+    severidad: str,
+    *,
+    occurred_at: str | None = "2026-11-14T04:25:20+00:00",
+    generated_at: str | None = "2026-11-14T04:25:30+00:00",
+) -> dict:
     return {
         "record": "alert",
         "alert_id": alert_id,
@@ -60,6 +67,8 @@ def _alerta(alert_id: str, estado: str, severidad: str) -> dict:
         "occurrence_state": estado,
         "severity": severidad,
         "rule_id": "p6-06-low-confidence",
+        "occurred_at": occurred_at,
+        "generated_at": generated_at,
     }
 
 
@@ -207,11 +216,99 @@ class MetricasSieteGrupos(unittest.TestCase):
         self.assertEqual(g6["valor"], 27.0)
         self.assertEqual(g6["unidad"], "segundos")
 
-    def test_g7_alertas_triggered(self):
+    def test_g7_tiempo_medio_de_deteccion(self):
         g7 = self.artefactos.calcular()["metricas"]["G7"]
-        self.assertEqual((g7["numerador"], g7["denominador"]), (1, 2))
-        self.assertEqual(g7["valor"], 0.5)
-        self.assertEqual(g7["evidencia"]["alertas"], 2)
+        self.assertEqual((g7["numerador"], g7["denominador"]), (10.0, 1))
+        self.assertEqual(g7["valor"], 10.0)
+        self.assertEqual(g7["unidad"], "segundos (promedio por alerta triggered valida)")
+        self.assertEqual(g7["estado"], "ok")
+        self.assertEqual(g7["evidencia"]["alertas_persistidas"], 2)
+        self.assertEqual(g7["evidencia"]["alertas_triggered"], 1)
+        self.assertEqual(g7["evidencia"]["alertas_validas"], 1)
+        self.assertEqual(g7["evidencia"]["segundos_totales"], 10.0)
+        self.assertEqual(
+            g7["evidencia"]["muestra_primaria"][0]["alert_id"], "a1"
+        )
+        self.assertIn("lotes", g7["exclusiones"])
+        self.assertIn("No es latencia en tiempo real", g7["exclusiones"])
+        self.assertIn("recuperacion", g7["exclusiones"])
+
+
+class TiempoDeDeteccionG7(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_promedia_solo_alertas_triggered_validas_y_traza_ids(self):
+        artefactos = Artefactos(self.base).escribir(
+            alertas=[
+                _alerta("a1", "triggered", "warning"),
+                _alerta(
+                    "a2",
+                    "triggered",
+                    "critical",
+                    occurred_at="2026-11-14T04:25:00+00:00",
+                    generated_at="2026-11-14T04:25:30+00:00",
+                ),
+                _alerta("a3", "informational", "info"),
+                _alerta("a4", "triggered", "warning", occurred_at=None),
+                _alerta(
+                    "a5",
+                    "triggered",
+                    "warning",
+                    occurred_at="no-es-fecha",
+                ),
+                _alerta(
+                    "a6",
+                    "triggered",
+                    "warning",
+                    occurred_at="2026-11-14T04:25:30+00:00",
+                    generated_at="2026-11-14T04:25:20+00:00",
+                ),
+            ]
+        )
+        g7 = artefactos.calcular()["metricas"]["G7"]
+        self.assertEqual((g7["numerador"], g7["denominador"]), (40.0, 2))
+        self.assertEqual(g7["valor"], 20.0)
+        self.assertEqual(g7["estado"], "ok")
+        evidencia = g7["evidencia"]
+        self.assertEqual(evidencia["alertas_persistidas"], 6)
+        self.assertEqual(evidencia["alertas_triggered"], 5)
+        self.assertEqual(evidencia["alertas_validas"], 2)
+        self.assertEqual(evidencia["ausentes"], ["a4"])
+        self.assertEqual(evidencia["invalidas"], ["a5"])
+        self.assertEqual(evidencia["diferencias_negativas"], ["a6"])
+        self.assertEqual(
+            [fila["alert_id"] for fila in evidencia["muestra_primaria"]],
+            ["a1", "a2"],
+        )
+        self.assertEqual(
+            [fila["segundos"] for fila in evidencia["muestra_primaria"]],
+            [10.0, 30.0],
+        )
+
+    def test_sin_deltas_validos_reporta_sin_datos(self):
+        artefactos = Artefactos(self.base).escribir(
+            alertas=[
+                _alerta(
+                    "a1",
+                    "triggered",
+                    "warning",
+                    occurred_at="2026-11-14T04:25:30+00:00",
+                    generated_at="2026-11-14T04:25:20+00:00",
+                ),
+            ]
+        )
+        g7 = artefactos.calcular()["metricas"]["G7"]
+        self.assertIsNone(g7["numerador"])
+        self.assertEqual(g7["denominador"], 0)
+        self.assertIsNone(g7["valor"])
+        self.assertEqual(g7["estado"], "sin_datos")
+        self.assertTrue(g7["ausencias"])
+        self.assertEqual(g7["evidencia"]["diferencias_negativas"], ["a1"])
 
 
 class CeroSeguro(unittest.TestCase):
@@ -260,8 +357,9 @@ class CeroSeguro(unittest.TestCase):
         self.assertEqual(reporte["metricas"]["G1"]["valor"], 0.0)
         self.assertEqual(reporte["metricas"]["G2"]["valor"], 0.0)
         self.assertEqual(reporte["metricas"]["G4"]["valor"], 0.0)
-        self.assertEqual(reporte["metricas"]["G7"]["valor"], 0.0)
-        for grupo in ("G1", "G2", "G4", "G7"):
+        self.assertIsNone(reporte["metricas"]["G7"]["valor"])
+        self.assertEqual(reporte["metricas"]["G7"]["estado"], "sin_datos")
+        for grupo in ("G1", "G2", "G4"):
             self.assertEqual(reporte["metricas"][grupo]["estado"], "ok", grupo)
 
     def test_g3_sin_disco_reporta_sin_datos(self):
@@ -384,7 +482,7 @@ class RecalculoManual(unittest.TestCase):
             "G4": (5, 9, 0.555556),
             "G5": (2, 3, 0.666667),
             "G6": (30.0, 1, 30.0),
-            "G7": (2, 3, 0.666667),
+            "G7": (20.0, 2, 10.0),
         }
         for grupo, (numerador, denominador, valor) in esperado.items():
             metrica = reporte["metricas"][grupo]

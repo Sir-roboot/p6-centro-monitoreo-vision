@@ -495,35 +495,100 @@ def calcular_metricas(
     )
 
 
-    # G7: alertas disparadas entre alertas persistidas. No modela ciclo de vida.
+    # G7: tiempo medio de deteccion desde occurred_at hasta generated_at por
+    # alerta triggered. El sistema escribe por lotes: el delta incluye la espera
+    # hasta procesar el lote y no es latencia en tiempo real ni recuperacion.
     severidades = Counter(str(alerta.get("severity")) for alerta in alertas)
     reglas = Counter(str(alerta.get("rule_id")) for alerta in alertas)
-    g7_den = len(alertas)
-    g7_num = sum(
-        1 for alerta in alertas if alerta.get("occurrence_state") == "triggered"
-    )
+    triggered = [
+        alerta
+        for alerta in alertas
+        if alerta.get("occurrence_state") == "triggered"
+    ]
+    g7_segundos: list[float] = []
+    g7_muestra: list[dict[str, Any]] = []
+    g7_ausentes: list[str] = []
+    g7_invalidas: list[str] = []
+    g7_negativas: list[str] = []
+    for indice, alerta in enumerate(triggered):
+        alert_id = str(alerta.get("alert_id") or f"indice-{indice}")
+        occurred_raw = alerta.get("occurred_at")
+        generated_raw = alerta.get("generated_at")
+        if not _es_texto(occurred_raw) or not _es_texto(generated_raw):
+            g7_ausentes.append(alert_id)
+            continue
+        occurred_at = _parsear_instante(occurred_raw)
+        generated_at = _parsear_instante(generated_raw)
+        if occurred_at is None or generated_at is None:
+            g7_invalidas.append(alert_id)
+            continue
+        segundos = (generated_at - occurred_at).total_seconds()
+        if segundos < 0:
+            g7_negativas.append(alert_id)
+            continue
+        g7_segundos.append(segundos)
+        if len(g7_muestra) < 20:
+            g7_muestra.append(
+                {
+                    "alert_id": alert_id,
+                    "occurred_at": occurred_raw,
+                    "generated_at": generated_raw,
+                    "segundos": round(segundos, 6),
+                }
+            )
+    g7_den = len(g7_segundos)
+    g7_num = round(sum(g7_segundos), 6) if g7_den else None
+    if not triggered:
+        g7_ausencias = [
+            "No hay alertas triggered persistidas; el tiempo medio no se calcula."
+        ]
+    elif g7_den == 0:
+        g7_ausencias = [
+            "Ninguna alerta triggered tiene occurred_at y generated_at validos "
+            "con generated_at >= occurred_at; el tiempo medio no se calcula."
+        ]
+    else:
+        g7_ausencias = []
     metricas["G7"] = _metrica(
         grupo="G7",
-        nombre="Proporcion de alertas con estado triggered",
-        unidad="ratio (alertas triggered / alertas persistidas)",
-        formula="alertas_occurrence_state_triggered / alertas_persistidas",
-        poblacion="Registros record=alert del JSONL P6-06; excluye el manifiesto.",
-        ventana="Corrida completa de alertas persistidas.",
+        nombre="Tiempo medio de deteccion",
+        unidad="segundos (promedio por alerta triggered valida)",
+        formula=(
+            "suma(segundos(generated_at - occurred_at)) / "
+            "alertas_triggered_con_timestamps_validos; cada delta debe ser >= 0"
+        ),
+        poblacion=(
+            "Alertas record=alert de P6-06 con occurrence_state=triggered, "
+            "occurred_at y generated_at ISO 8601 parseables y delta no negativo."
+        ),
+        ventana=(
+            "Desde occurred_at del evento primario hasta generated_at del lote "
+            "que produjo la alerta."
+        ),
         exclusiones=(
-            "occurrence_state no es un ciclo de vida activa/resuelta. No existen "
-            "reconocimiento, recuperacion ni costos instrumentados."
+            "El sistema genera alertas por lotes: el delta incluye la espera "
+            "hasta procesar el lote. No es latencia en tiempo real, no mide "
+            "reconocimiento ni recuperacion, y no hay ciclo de vida "
+            "activa/resuelta. Se excluyen alertas informational, timestamps "
+            "ausentes o invalidos y deltas negativos."
         ),
-        ausencias=(
-            ["No hay alertas persistidas; la proporcion no se calcula."]
-            if g7_den == 0
-            else []
-        ),
+        ausencias=g7_ausencias,
         fuente="alertas",
         numerador=g7_num,
         denominador=g7_den,
-        valor=_ratio(g7_num, g7_den),
+        valor=_ratio(g7_num, g7_den) if g7_num is not None else None,
         evidencia={
-            "alertas": g7_den,
+            "alertas_persistidas": len(alertas),
+            "alertas_triggered": len(triggered),
+            "alertas_validas": g7_den,
+            "segundos_totales": g7_num,
+            "num_ausentes": len(g7_ausentes),
+            "ausentes": g7_ausentes[:20],
+            "num_invalidas": len(g7_invalidas),
+            "invalidas": g7_invalidas[:20],
+            "num_diferencias_negativas": len(g7_negativas),
+            "diferencias_negativas": g7_negativas[:20],
+            "muestra_primaria": g7_muestra,
             "occurrence_state": dict(
                 sorted(
                     Counter(
@@ -545,8 +610,9 @@ def calcular_metricas(
         "G3 es una medida instantanea del disco accesible por --root.",
         "G6 solo usa timestamps de observaciones de una corrida; no prueba "
         "continuidad de la fuente.",
-        "G7 usa occurrence_state como proxy auditable porque P6-06 no modela "
-        "alertas activas/resueltas ni reconocimiento.",
+        "G7 mide occurred_at -> generated_at por alerta triggered; al generar "
+        "por lotes incluye la espera de procesamiento y no es latencia en "
+        "tiempo real ni recuperacion.",
         "Los umbrales de confianza de P6-04 siguen siendo exploratorios.",
     ]
     if len(run_ids) > 1:
