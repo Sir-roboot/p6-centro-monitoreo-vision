@@ -8,6 +8,13 @@ falta de evidencia en normalidad.
 Las reglas son explicitas y su configuracion se conserva en el manifiesto y en
 cada alerta. La alerta de baja confianza tiene su propia condicion y no depende
 del cambio sostenido de P6-04; eso permite acreditar C2 sin inventar drift.
+
+Cada alerta declara un ``occurrence_state`` inmutable: ``triggered`` para
+warning/critical e ``informational`` para la evidencia insuficiente. Ese campo
+explica por que existe la alerta; no es un estado activo/resuelto ni un ciclo de
+vida, que P6-06 no modela. Una corrida sin cuadros muestreados produce 0 eventos
+y solo puede emitir la alerta informativa enlazada a la politica, sin fabricar
+detecciones, eventos ni capturas.
 """
 
 from __future__ import annotations
@@ -37,6 +44,22 @@ SEVERIDADES = ("info", "warning", "critical")
 ZONAS = {"low", "doubt", "accepted"}
 ESTADOS_EVENTO = {"scored", "no_detections", "technical_error", "no_score"}
 
+# Estado de ocurrencia de la alerta: describe por que existe la alerta, no su
+# ciclo de vida. P6-06 no implementa estados active/resolved/acknowledged.
+ESTADOS_OCURRENCIA = ("triggered", "informational")
+OCURRENCIA_POR_SEVERIDAD = {
+    "critical": "triggered",
+    "warning": "triggered",
+    "info": "informational",
+}
+ESTADOS_CICLO_VIDA_NO_SOPORTADOS = {
+    "active",
+    "resolved",
+    "acknowledged",
+    "closed",
+    "open",
+}
+
 RULE_BAJA_CONFIANZA = "p6-06-low-confidence"
 RULE_CAMBIO_SOSTENIDO = "p6-06-sustained-change"
 RULE_EVIDENCIA_INSUFICIENTE = "p6-06-insufficient-evidence"
@@ -48,6 +71,15 @@ class ErrorAlertas(ValueError):
 
 def _instante() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _estado_ocurrencia(severidad: str) -> str:
+    """Estado de ocurrencia inmutable derivado de la severidad declarada."""
+
+    estado = OCURRENCIA_POR_SEVERIDAD.get(severidad)
+    if estado is None:
+        raise ErrorAlertas(f"severidad sin estado de ocurrencia: {severidad!r}")
+    return estado
 
 
 def _json_canonico(valor: Any) -> str:
@@ -277,7 +309,8 @@ def reglas_alertas(
             insufficient_data_handling=(
                 "La insuficiencia se registra como alerta informativa de calidad "
                 "de evidencia. No se convierte en normalidad ni en una alerta de "
-                "escena."
+                "escena. Una corrida con 0 eventos tambien produce esta alerta, "
+                "enlazada solo a la politica y sin detecciones fabricadas."
             ),
             suggested_action=(
                 "Recolectar mas eventos o ventanas y corregir la referencia si es "
@@ -291,8 +324,12 @@ def reglas_alertas(
 def _validar_eventos(
     eventos: Sequence[Mapping[str, Any]], run_id: str
 ) -> list[Mapping[str, Any]]:
-    if not isinstance(eventos, list) or not eventos:
-        raise ErrorAlertas(f"la corrida {run_id} no tiene eventos persistidos")
+    if not isinstance(eventos, list):
+        raise ErrorAlertas(f"la corrida {run_id}: los eventos deben ser una lista")
+    if not eventos:
+        # Un stream sin cuadros muestreados produce un JSONL P6-05 valido de 0
+        # eventos. Se conserva como ausencia de evidencia, no como normalidad.
+        return []
     vistos: set[str] = set()
     policy_ids: set[str] = set()
     for posicion, evento in enumerate(eventos, start=1):
@@ -388,14 +425,15 @@ def _candidatos_politica(
     candidatos: list[Path] = []
     if policy_path is not None:
         candidatos.append(Path(policy_path))
-    referencias = {str(evento["policy_ref"]) for evento in eventos}
-    if len(referencias) > 1:
-        raise ErrorAlertas("los eventos referencian rutas de politica distintas")
-    referencia = Path(next(iter(referencias)))
-    if referencia not in candidatos:
-        candidatos.append(referencia)
-        if not referencia.is_absolute():
-            candidatos.append(Path.cwd() / referencia)
+    if eventos:
+        referencias = {str(evento["policy_ref"]) for evento in eventos}
+        if len(referencias) > 1:
+            raise ErrorAlertas("los eventos referencian rutas de politica distintas")
+        referencia = Path(next(iter(referencias)))
+        if referencia not in candidatos:
+            candidatos.append(referencia)
+            if not referencia.is_absolute():
+                candidatos.append(Path.cwd() / referencia)
     predeterminada = root / "politicas" / f"{run_id}-p6-04.json"
     if predeterminada not in candidatos:
         candidatos.append(predeterminada)
@@ -492,6 +530,7 @@ def _ref_evento(
         "status": evento["status"],
         "zone": evento["zone"],
         "prediction": evento["prediction"],
+        "policy_id": evento["policy_id"],
         "policy_ref": evento["policy_ref"],
         "capture": evento["capture"],
     }
@@ -640,6 +679,7 @@ def _base_alerta(
         "rule": regla.to_dict(),
         "rule_config": configuracion.to_dict(),
         "severity": regla.severity,
+        "occurrence_state": _estado_ocurrencia(regla.severity),
         "reason": reason,
         "suggested_action": regla.suggested_action,
         "occurred_at": occurred_at,
@@ -864,6 +904,7 @@ def _alerta_evidencia_insuficiente(
         policy_windows=resumenes,
         policy_window_indices=indices,
     )
+    sin_eventos = not eventos
     motivo = (
         f"La politica {politica['policy_id']} no acredita normalidad: "
         f"status={cambio['status']}, motivo={cambio['reason']}, "
@@ -871,23 +912,46 @@ def _alerta_evidencia_insuficiente(
         f"incomplete_windows={len(_ventanas(politica)) - cambio['complete_windows']}. "
         "La insuficiencia se registra como alerta informativa, no como normalidad."
     )
+    if sin_eventos:
+        motivo += (
+            " La corrida no contiene eventos P6-05 porque el stream no aporto "
+            "cuadros muestreados; la alerta se enlaza solo a la politica y no "
+            "se fabrican detecciones, eventos ni capturas."
+        )
     evidencia = {
         "policy_status": cambio["status"],
         "policy_reason": cambio["reason"],
         "reference_status": cambio["reference_status"],
         "complete_windows": cambio["complete_windows"],
         "evaluated_windows": len(_ventanas(politica)),
+        "persisted_events": len(eventos),
+        "evidence_origin": "policy_only" if sin_eventos else "events_and_policy",
+        "detections_created": 0,
         "insufficiency_is_not_normality": True,
         "depends_on_sustained_change": False,
     }
-    origen = vinculados[0] if vinculados else eventos[0]
+    if vinculados:
+        origen = vinculados[0]
+        occurred_at = origen["occurred_at"]
+        primary_event_id = origen["event_id"]
+        source = origen["source"]
+        model = origen["model"]
+        filters = origen["filters"]
+    else:
+        # Sin eventos no se inventa un evento principal: la alerta queda
+        # enlazada a la politica mediante policy_id/policy_ref.
+        occurred_at = None
+        primary_event_id = None
+        source = {"id": politica["input"]["source_id"]}
+        model = politica["identity"]["model"]
+        filters = politica["identity"]["filters"]
     alerta = _base_alerta(
         regla=regla,
         configuracion=configuracion,
         run_id=politica["input"]["run_id"],
         politica=politica,
-        occurred_at=origen["occurred_at"],
-        primary_event_id=origen["event_id"],
+        occurred_at=occurred_at,
+        primary_event_id=primary_event_id,
         window=ventana,
         reason=motivo,
         evidence=evidencia,
@@ -895,9 +959,9 @@ def _alerta_evidencia_insuficiente(
         events_ref=events_ref,
         generated_at=generated_at,
     )
-    alerta["source"] = origen["source"]
-    alerta["model"] = origen["model"]
-    alerta["filters"] = origen["filters"]
+    alerta["source"] = source
+    alerta["model"] = model
+    alerta["filters"] = filters
     return [alerta]
 
 
@@ -907,6 +971,8 @@ def _limitaciones() -> list[str]:
         "Las alertas se derivan de artefactos locales P6-05/P6-04; un clon limpio no puede reabrir esos datos.",
         "Una alerta de baja confianza no demuestra drift, fallo del detector ni calidad predictiva.",
         "Insuficiencia de evidencia no es normalidad; la alerta informativa no cierra la revision.",
+        "Una corrida sin cuadros muestreados produce 0 eventos: solo la alerta informativa enlazada a la politica; occurred_at queda nulo y no se crean detecciones, eventos ni capturas.",
+        "occurrence_state (triggered/informational) describe por que existe la alerta; no es un estado activo/resuelto ni un ciclo de vida.",
         "No hay envio de correo, reconocimiento, resolucion automatica ni expiracion automatica.",
         "Los umbrales de P6-04 siguen siendo exploratorios hasta completar C1/C2 con escenas reales.",
     ]
@@ -925,12 +991,25 @@ def _contrato_portal() -> dict[str, Any]:
             "occurred_at",
             "rule_id",
             "severity",
+            "occurrence_state",
             "reason",
             "suggested_action",
             "event_id",
             "event_ids",
             "window",
         ],
+        "occurrence_state": {
+            "field": "occurrence_state",
+            "values": list(ESTADOS_OCURRENCIA),
+            "assignment": dict(OCURRENCIA_POR_SEVERIDAD),
+            "meaning": (
+                "triggered: la regla se cumplio; informational: alerta de "
+                "calidad de evidencia (insuficiencia), no de escena."
+            ),
+            "immutable": True,
+            "lifecycle_tracking": False,
+            "equals_active_or_resolved": False,
+        },
         "links": {
             "events": "event_ids y window.event_refs[].event_id",
             "captures": "window.event_refs[].capture (compatible con abrir_captura)",
@@ -971,6 +1050,19 @@ def _validar_alerta(
     regla = reglas[rule_id]
     if alerta.get("severity") != regla.severity:
         raise ErrorAlertas(f"severidad distinta de la regla {rule_id}")
+    ocurrencia = alerta.get("occurrence_state")
+    if ocurrencia in ESTADOS_CICLO_VIDA_NO_SOPORTADOS:
+        raise ErrorAlertas(
+            "occurrence_state no es un estado de ciclo de vida "
+            f"(active/resolved no se soportan): {ocurrencia!r}"
+        )
+    if ocurrencia not in ESTADOS_OCURRENCIA:
+        raise ErrorAlertas(f"occurrence_state invalido: {ocurrencia!r}")
+    if ocurrencia != _estado_ocurrencia(regla.severity):
+        raise ErrorAlertas(
+            f"occurrence_state no corresponde a la severidad {regla.severity}: "
+            f"{ocurrencia!r}"
+        )
     if alerta.get("rule") != regla.to_dict():
         raise ErrorAlertas(f"metadatos de regla alterados: {rule_id}")
     if not isinstance(alerta.get("reason"), str) or not alerta["reason"]:
@@ -1090,6 +1182,9 @@ def _manifiesto(
     generated_at: str,
 ) -> dict[str, Any]:
     por_regla, por_severidad = _resumen_alertas(alertas, reglas)
+    por_ocurrencia = {estado: 0 for estado in ESTADOS_OCURRENCIA}
+    for alerta in alertas:
+        por_ocurrencia[alerta["occurrence_state"]] += 1
     puntuados = sum(1 for evento in eventos if evento["status"] == "scored")
     return {
         "schema": SCHEMA,
@@ -1108,6 +1203,19 @@ def _manifiesto(
         "alert_count": len(alertas),
         "counts_by_rule": por_regla,
         "counts_by_severity": por_severidad,
+        "counts_by_occurrence_state": por_ocurrencia,
+        "occurrence_state_contract": {
+            "field": "occurrence_state",
+            "values": list(ESTADOS_OCURRENCIA),
+            "assignment": dict(OCURRENCIA_POR_SEVERIDAD),
+            "immutable": True,
+            "lifecycle_tracking": False,
+            "equals_active_or_resolved": False,
+            "note": (
+                "occurrence_state explica por que existe la alerta y no cambia. "
+                "P6-06 no modela estado activo/resuelto, reconocimiento ni cierre."
+            ),
+        },
         "rules": [regla.to_dict() for regla in reglas],
         "configuration": configuracion.to_dict(),
         "alerts_digest": _huella(list(alertas)),
@@ -1157,6 +1265,29 @@ def _validar_manifiesto(
         raise ErrorAlertas("counts_by_rule no coincide con las alertas")
     if manifiesto.get("counts_by_severity") != por_severidad:
         raise ErrorAlertas("counts_by_severity no coincide con las alertas")
+    por_ocurrencia = {estado: 0 for estado in ESTADOS_OCURRENCIA}
+    for alerta in validadas:
+        por_ocurrencia[alerta["occurrence_state"]] += 1
+    if manifiesto.get("counts_by_occurrence_state") != por_ocurrencia:
+        raise ErrorAlertas("counts_by_occurrence_state no coincide con las alertas")
+    contrato_ocurrencia = manifiesto.get("occurrence_state_contract")
+    contrato_esperado = {
+        "field": "occurrence_state",
+        "values": list(ESTADOS_OCURRENCIA),
+        "assignment": dict(OCURRENCIA_POR_SEVERIDAD),
+        "immutable": True,
+        "lifecycle_tracking": False,
+        "equals_active_or_resolved": False,
+        "note": (
+            "occurrence_state explica por que existe la alerta y no cambia. "
+            "P6-06 no modela estado activo/resuelto, reconocimiento ni cierre."
+        ),
+    }
+    if contrato_ocurrencia != contrato_esperado:
+        raise ErrorAlertas(
+            "el manifiesto debe declarar occurrence_state inmutable y ajeno al "
+            "ciclo de vida"
+        )
     if manifiesto.get("alerts_digest") != _huella(list(validadas)):
         raise ErrorAlertas("alerts_digest no coincide con las alertas")
     if manifiesto.get("insufficiency_is_not_normality") is not True:
@@ -1221,7 +1352,11 @@ def construir_alertas(
     else:
         generado = generado_en
     referencias = {str(evento["policy_ref"]) for evento in eventos}
-    policy_ref = next(iter(referencias)) if len(referencias) == 1 else str(politica_path)
+    policy_ref = (
+        next(iter(referencias))
+        if len(referencias) == 1
+        else str(politica_path)
+    )
     events_ref = str(root / "eventos" / f"{run_id}.jsonl")
     alertas: list[dict[str, Any]] = []
     alertas.extend(
@@ -1433,8 +1568,10 @@ def verificar_evidencia_alertas(
             for campo in (
                 "observation_id",
                 "frame_id",
+                "frame_number",
                 "status",
                 "occurred_at",
+                "policy_id",
                 "policy_ref",
             ):
                 if referencia.get(campo) != evento.get(campo):
@@ -1442,6 +1579,15 @@ def verificar_evidencia_alertas(
                         f"{alerta['alert_id']}: {campo} no coincide en {event_id}"
                     )
             captura = referencia.get("capture")
+            original = evento.get("capture")
+            if captura != original:
+                # No basta con que exista un JPEG valido: la referencia debe
+                # copiar exactamente path y sha256 del evento P6-05 original.
+                fallos.append(
+                    f"{alerta['alert_id']}: capture no coincide exactamente con "
+                    f"el evento {event_id}"
+                )
+                continue
             if captura is None:
                 continue
             try:
@@ -1453,11 +1599,28 @@ def verificar_evidencia_alertas(
                 )
             else:
                 capturas.add(captura["path"])
-    policies = {evento["policy_ref"] for evento in eventos}
-    if manifiesto.get("policy_ref") not in policies:
-        fallos.append("policy_ref del manifiesto no aparece en los eventos")
-    if {evento["policy_id"] for evento in eventos} != {manifiesto["policy_id"]}:
-        fallos.append("policy_id del manifiesto no coincide con los eventos")
+    if eventos:
+        policies = {evento["policy_ref"] for evento in eventos}
+        if manifiesto.get("policy_ref") not in policies:
+            fallos.append("policy_ref del manifiesto no aparece en los eventos")
+        if {evento["policy_id"] for evento in eventos} != {
+            manifiesto["policy_id"]
+        }:
+            fallos.append("policy_id del manifiesto no coincide con los eventos")
+    else:
+        # Una corrida sin cuadros muestreados no tiene eventos que referencien
+        # la politica; se verifica que la politica enlazada exista y coincida.
+        try:
+            politica = leer_politica(manifiesto.get("policy_ref") or "")
+        except (ErrorConfianza, OSError, TypeError, ValueError) as exc:
+            fallos.append(f"policy_ref del manifiesto no es legible: {exc}")
+        else:
+            if politica.get("policy_id") != manifiesto.get("policy_id"):
+                fallos.append(
+                    "policy_id del manifiesto no coincide con la politica enlazada"
+                )
+            if politica.get("input", {}).get("run_id") != run_id:
+                fallos.append("la politica enlazada pertenece a otra corrida")
     return {
         "ok": not fallos,
         "run_id": run_id,

@@ -215,12 +215,18 @@ calcula reglas de alerta. Contrato, comandos y límites:
 P6-04 que esos eventos referencian en alertas explícitas. No vuelve a inferir,
 no recalcula NMS ni zonas y no convierte `insufficient_evidence` en normalidad.
 Publica `datos_locales/alertas/<run_id>.jsonl` sin sobrescribir corridas y sin
-expiración automática. Las reglas son `p6-06-low-confidence` (baja confianza
-independiente de `sustained_change`), `p6-06-sustained-change` (solo con
-evidencia suficiente de P6-04) y `p6-06-insufficient-evidence` (informativa:
-la insuficiencia no acredita normalidad). El comando
+expiración automática. Cada alerta declara `occurrence_state` inmutable
+(`triggered` para warning/critical, `informational` para insuficiencia), que no
+es un estado activo/resuelto ni un ciclo de vida. Una corrida sin cuadros
+muestreados produce 0 eventos y solo la alerta informativa enlazada a la
+política, sin fabricar detecciones ni capturas. Las reglas son
+`p6-06-low-confidence` (baja confianza independiente de `sustained_change`),
+`p6-06-sustained-change` (solo con evidencia suficiente de P6-04) y
+`p6-06-insufficient-evidence` (informativa: la insuficiencia no acredita
+normalidad). El comando
 `.\\.venv\\Scripts\\python.exe .\\consultar_alertas.py --run-id $runId --verify`
-relee las alertas, comprueba los eventos y los hashes de las capturas después
+relee las alertas, exige igualdad exacta de cada `event_ref` con su evento
+(`policy_id` y captura incluidos) y comprueba los hashes de las capturas después
 de reiniciar. La vista de alertas del portal (R5.3) sigue pendiente; P6-06 deja
 un contrato de consulta. En la corrida local
 `p6-05-verificacion-20261113-222520` se generaron 10 alertas `warning` de baja

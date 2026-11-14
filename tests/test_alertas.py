@@ -7,6 +7,7 @@ persistidas. P6-06 no vuelve a inferir ni reclasifica ninguna puntuacion.
 from __future__ import annotations
 
 from collections import Counter
+from hashlib import sha256
 import json
 from pathlib import Path
 import subprocess
@@ -18,6 +19,7 @@ import numpy as np
 
 from alertas import (
     ErrorAlertas,
+    ESTADOS_OCURRENCIA,
     RULE_BAJA_CONFIANZA,
     RULE_CAMBIO_SOSTENIDO,
     RULE_EVIDENCIA_INSUFICIENTE,
@@ -31,6 +33,7 @@ from alertas import (
 )
 from detector_yolox import Deteccion, ResultadoCuadro
 from ejecutar_eventos import ejecutar_monitoreo
+from eventos import consultar_eventos
 from fuente import ObservacionFuente
 from observaciones import ejecutar_pipeline
 
@@ -40,6 +43,10 @@ MODELO = {
 }
 FILTROS = {"score_threshold": 0.1, "nms_threshold": 0.45}
 INSTANTE = "2026-11-13T12:00:00+00:00"
+
+
+def _canonico(valor: object) -> str:
+    return json.dumps(valor, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 class DetectorSecuencia:
@@ -110,6 +117,21 @@ class AlertasTests(unittest.TestCase):
             )
         }
 
+    def _reescribir_alerta(self, run_id: str, indice: int, mutar) -> None:
+        """Reescribe una alerta y reajusta el digest para aislar el campo probado."""
+        ruta = self.root / "alertas" / f"{run_id}.jsonl"
+        lineas = ruta.read_text(encoding="utf-8").splitlines()
+        alerta = json.loads(lineas[indice + 1])
+        mutar(alerta)
+        lineas[indice + 1] = _canonico(alerta)
+        alertas = [json.loads(linea) for linea in lineas[1:]]
+        manifiesto = json.loads(lineas[0])
+        manifiesto["alerts_digest"] = sha256(
+            _canonico(alertas).encode("utf-8")
+        ).hexdigest()
+        lineas[0] = _canonico(manifiesto)
+        ruta.write_text("\n".join(lineas) + "\n", encoding="utf-8")
+
     def test_dispara_baja_confianza_y_cambio_sostenido(self):
         resultado = self._monitorear(
             "sostenido", {n: (0.15,) for n in range(1, 11)}
@@ -157,6 +179,132 @@ class AlertasTests(unittest.TestCase):
         self.assertIs(alerta["normality_established"], False)
         self.assertIs(alerta["evidence"]["insufficiency_is_not_normality"], True)
         self.assertIn("no acredita normalidad", alerta["reason"])
+
+    def test_occurrence_state_explicito_inmutable_y_ajeno_al_ciclo_de_vida(self):
+        self._monitorear("ocurrencia", {n: (0.15,) for n in range(1, 11)})
+        leido = leer_manifiesto_alertas(self.root, "ocurrencia")
+        alertas = leido["alerts"]
+        esperados = {"warning": "triggered", "critical": "triggered"}
+        for alerta in alertas:
+            self.assertIn(alerta["occurrence_state"], ESTADOS_OCURRENCIA)
+            self.assertEqual(
+                alerta["occurrence_state"], esperados[alerta["severity"]]
+            )
+        conteos = leido["manifest"]["counts_by_occurrence_state"]
+        self.assertEqual(conteos, {"triggered": 11, "informational": 0})
+        contrato = leido["manifest"]["occurrence_state_contract"]
+        self.assertIs(contrato["immutable"], True)
+        self.assertIs(contrato["lifecycle_tracking"], False)
+        self.assertIs(contrato["equals_active_or_resolved"], False)
+        self._reescribir_alerta(
+            "ocurrencia", 0, lambda alerta: alerta.update(
+                {"occurrence_state": "resolved"}
+            )
+        )
+        with self.assertRaisesRegex(ErrorAlertas, "occurrence_state"):
+            leer_manifiesto_alertas(self.root, "ocurrencia")
+
+    def test_alerta_informativa_por_insuficiencia_se_marca_informational(self):
+        self._monitorear("corta", {1: (0.9,), 2: (0.9,)})
+        alertas = consultar_alertas(self.root, "corta")
+        self.assertEqual(len(alertas), 1)
+        self.assertEqual(alertas[0]["rule_id"], RULE_EVIDENCIA_INSUFICIENTE)
+        self.assertEqual(alertas[0]["occurrence_state"], "informational")
+
+    def test_event_ref_copia_policy_id_y_captura_exacta(self):
+        self._monitorear("evidencia", {n: (0.15,) for n in range(1, 11)})
+        alertas = consultar_alertas(self.root, "evidencia")
+        eventos = {
+            evento["event_id"]: evento
+            for evento in consultar_eventos(self.root, "evidencia")
+        }
+        referencias = [
+            (alerta, ref)
+            for alerta in alertas
+            for ref in alerta["window"]["event_refs"]
+        ]
+        self.assertTrue(referencias)
+        for alerta, ref in referencias:
+            evento = eventos[ref["event_id"]]
+            self.assertEqual(ref["policy_id"], evento["policy_id"])
+            self.assertEqual(ref["policy_id"], alerta["policy_id"])
+            self.assertEqual(ref["capture"], evento["capture"])
+        verificacion = verificar_evidencia_alertas(self.root, "evidencia")
+        self.assertTrue(verificacion["ok"], verificacion["failures"])
+
+    def test_verificacion_detecta_policy_id_alterado(self):
+        self._monitorear("alterada", {n: (0.15,) for n in range(1, 11)})
+        self._reescribir_alerta(
+            "alterada", 0, lambda alerta: alerta["window"]["event_refs"][0].update(
+                {"policy_id": "p6-04-0000000000000000"}
+            )
+        )
+        verificacion = verificar_evidencia_alertas(self.root, "alterada")
+        self.assertFalse(verificacion["ok"])
+        self.assertTrue(
+            any("policy_id" in fallo for fallo in verificacion["failures"]),
+            verificacion["failures"],
+        )
+
+    def test_verificacion_detecta_captura_sustituida_por_otra_valida(self):
+        self._monitorear("sustituida", {n: (0.15,) for n in range(1, 11)})
+        eventos = consultar_eventos(self.root, "sustituida")
+        alertas = consultar_alertas(self.root, "sustituida")
+        original = alertas[0]["window"]["event_refs"][0]
+        donante = next(
+            evento
+            for evento in eventos
+            if evento["event_id"] != original["event_id"]
+            and evento["capture"] != original["capture"]
+        )
+        # La captura donante es un JPEG valido y verificable: el rechazo debe
+        # venir de exigir igualdad exacta con el evento de origen.
+        self._reescribir_alerta(
+            "sustituida", 0, lambda alerta: alerta["window"]["event_refs"][0].update(
+                {"capture": donante["capture"]}
+            )
+        )
+        verificacion = verificar_evidencia_alertas(self.root, "sustituida")
+        self.assertFalse(verificacion["ok"])
+        self.assertTrue(
+            any("capture" in fallo for fallo in verificacion["failures"]),
+            verificacion["failures"],
+        )
+
+    def test_stream_sin_cuadros_muestreados_produce_alerta_informativa(self):
+        resultado = self._monitorear("vacia", {})
+        self.assertEqual(resultado["event_count"], 0)
+        self.assertEqual(resultado["alert_count"], 1)
+        self.assertEqual(consultar_eventos(self.root, "vacia"), [])
+        self.assertEqual(
+            (self.root / "eventos" / "vacia.jsonl").read_text(encoding="utf-8"),
+            "",
+        )
+        leido = leer_manifiesto_alertas(self.root, "vacia")
+        manifiesto = leido["manifest"]
+        self.assertEqual(manifiesto["event_count"], 0)
+        self.assertEqual(manifiesto["counts_by_occurrence_state"]["informational"], 1)
+        alertas = leido["alerts"]
+        self.assertEqual(len(alertas), 1)
+        alerta = alertas[0]
+        self.assertEqual(alerta["rule_id"], RULE_EVIDENCIA_INSUFICIENTE)
+        self.assertEqual(alerta["severity"], "info")
+        self.assertEqual(alerta["occurrence_state"], "informational")
+        self.assertEqual(alerta["event_ids"], [])
+        self.assertEqual(alerta["window"]["event_refs"], [])
+        self.assertIsNone(alerta["event_id"])
+        self.assertIsNone(alerta["occurred_at"])
+        self.assertEqual(alerta["policy_id"], manifiesto["policy_id"])
+        self.assertEqual(alerta["policy_ref"], manifiesto["policy_ref"])
+        self.assertIs(alerta["evidence_sufficient"], False)
+        self.assertIs(alerta["normality_established"], False)
+        self.assertEqual(alerta["evidence"]["persisted_events"], 0)
+        self.assertEqual(alerta["evidence"]["evidence_origin"], "policy_only")
+        self.assertEqual(alerta["evidence"]["detections_created"], 0)
+        self.assertIn("no contiene eventos", alerta["reason"])
+        verificacion = verificar_evidencia_alertas(self.root, "vacia")
+        self.assertTrue(verificacion["ok"], verificacion["failures"])
+        self.assertEqual(verificacion["event_count"], 0)
 
     def test_sin_alertas_cuando_todo_es_aceptado(self):
         resultado = self._monitorear(

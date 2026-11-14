@@ -90,13 +90,17 @@ datos no permiten construir una alerta verificable.
 .\.venv\Scripts\python.exe .\consultar_alertas.py --list-runs
 ```
 
-`--verify` recorre cada `window.event_refs`, comprueba que el `event_id` exista
-en el JSONL P6-05, que coincidan `observation_id`, `frame_id`, `status`,
-`occurred_at` y `policy_ref`, y que cada captura siga abriendo con
-`abrir_captura`, es decir, con su SHA-256 intacto. También comprueba que la
-política y el `policy_id` del manifiesto aparezcan en los eventos. Devuelve un
-JSON con `ok`, conteos y `failures`; el código de salida es distinto de cero si
-la verificación falla.
+`--verify` recorre cada `window.event_refs` y exige igualdad exacta con el
+evento P6-05: `event_id`, `observation_id`, `frame_id`, `frame_number`,
+`status`, `occurred_at`, `policy_id`, `policy_ref` y `capture` (con `path` y
+`sha256`). No basta con que exista un JPEG válido: una captura sustituida por
+otra captura válida también se rechaza porque el `sha256` no coincide con el del
+evento de origen. Cada captura referenciada se abre además con `abrir_captura`
+para comprobar que su contenido sigue intacto. También comprueba que el
+`policy_ref` y el `policy_id` del manifiesto aparezcan en los eventos y, si la
+corrida tiene **0 eventos**, que la política enlazada exista, coincida con
+`policy_id` y pertenezca a la misma corrida. Devuelve un JSON con `ok`, conteos
+y `failures`; el código de salida es distinto de cero si la verificación falla.
 
 ## Contrato de los artefactos
 
@@ -106,18 +110,21 @@ La primera línea es el manifiesto (`record: "alert_manifest"`,
 - identidad de la corrida y de la política: `run_id`, `policy_id`,
   `policy_status`, `policy_reason`, `policy_ref`, `events_ref`;
 - conteos: `event_count`, `scored_event_count`, `unscored_event_count`,
-  `alert_count`, `counts_by_rule`, `counts_by_severity`;
+  `alert_count`, `counts_by_rule`, `counts_by_severity`,
+  `counts_by_occurrence_state`;
+- `occurrence_state_contract`, que declara los valores permitidos, la asignación
+  por severidad y que el campo es inmutable y **no** modela ciclo de vida;
 - `rules`, `configuration`, `generated_at` y `alerts_digest`;
 - `insufficiency_is_not_normality: true`, `persistence` sin expiración,
   `portal_contract` y `limitations`.
 
 Cada línea siguiente es una alerta (`record: "alert"`) con `alert_id`
 determinista, `dedupe_key`, `run_id`, `rule_id`, `rule_version`, `rule`,
-`rule_config`, `severity`, `reason`, `suggested_action`, `occurred_at`,
-`generated_at`, `source`, `model`, `filters`, `policy_id`, `policy_status`,
-`policy_reason`, `evidence_sufficient`, `normality_established`, `policy_ref`,
-`events_ref`, `event_id`, `event_ids`, `observation_ids`, `window`, `evidence` y
-`policy_config`.
+`rule_config`, `severity`, `occurrence_state`, `reason`, `suggested_action`,
+`occurred_at`, `generated_at`, `source`, `model`, `filters`, `policy_id`,
+`policy_status`, `policy_reason`, `evidence_sufficient`,
+`normality_established`, `policy_ref`, `events_ref`, `event_id`, `event_ids`,
+`observation_ids`, `window`, `evidence` y `policy_config`.
 
 `window` contiene `kind`, `event_ids`, `observation_ids`, `event_refs`,
 `policy_window_indices`, el resumen de las ventanas y, cuando aplica, las zonas
@@ -140,8 +147,38 @@ from alertas import (
 `consultar_alertas` devuelve solo las alertas en el orden persistido (baja
 confianza, cambio sostenido, insuficiencia). El
 `portal_contract` del manifiesto declara los campos mínimos que deberá mostrar
-R5.3: `occurred_at`, `rule_id`, `severity`, `reason`, `suggested_action`,
-`event_id`, `event_ids` y `window`.
+R5.3: `occurred_at`, `rule_id`, `severity`, `occurrence_state`, `reason`,
+`suggested_action`, `event_id`, `event_ids` y `window`. También declara los
+valores permitidos de `occurrence_state`, su asignación por severidad y que es
+inmutable y ajeno al ciclo de vida.
+
+## Estado de ocurrencia y corridas sin eventos
+
+Cada alerta lleva `occurrence_state`, un estado **explícito e inmutable** que
+explica por qué existe la alerta:
+
+| Valor | Se asigna cuando | Significado |
+| --- | --- | --- |
+| `triggered` | severidad `warning` o `critical` | La regla se cumplió sobre la evidencia. |
+| `informational` | severidad `info` | La alerta reporta calidad de evidencia (insuficiencia), no una condición de escena. |
+
+La asignación se deriva de la severidad (`warning`/`critical` → `triggered`,
+`info` → `informational`) y está declarada en
+`occurrence_state_contract.assignment`. El campo **no** es un estado de ciclo de
+vida: P6-06 no modela `active`, `resolved`, reconocimiento, cierre ni
+expiración. La lectura rechaza cualquier otro valor, cualquier valor que no
+corresponda a la severidad de la regla y, explícitamente, `active`/`resolved`.
+
+Un stream que no aporta cuadros muestreados produce una corrida P6-05 válida con
+**0 eventos** y un archivo `eventos/<run_id>.jsonl` vacío. En ese caso P6-06 no
+fabrica detecciones, eventos ni capturas: emite exactamente una alerta
+`p6-06-insufficient-evidence` con `severity: info`,
+`occurrence_state: informational`, `event_id: null`, `occurred_at: null`,
+`event_ids: []` y `event_refs: []`. La alerta queda enlazada a la política
+mediante `policy_id`/`policy_ref`, y su `evidence` declara
+`persisted_events: 0`, `evidence_origin: "policy_only"` y
+`detections_created: 0`. La verificación comprueba entonces que la política
+enlazada exista, coincida con `policy_id` y pertenezca a la misma corrida.
 
 ## Corrida local verificada
 
@@ -156,9 +193,10 @@ existir sin que P6-04 declare cambio sostenido; **no** demuestra drift ni
 calidad del detector.
 
 SHA-256 del manifiesto local de alertas:
-`0df4a2ee589c4ed05cb85ef33116b72d13a3d935b4f87be08b16dcafa5af6569`.
-El archivo está en `datos_locales/` (ignorado por Git), por lo que un clon
-limpio no puede reabrir esta comprobación.
+`b90bb89bce3e77f749903889c4d21921890817e92cf4d906561ec8922b7311e0`.
+El archivo se regeneró con el contrato actual (`occurrence_state`, `policy_id` en
+cada `event_ref` y captura exacta) y está en `datos_locales/` (ignorado por
+Git), por lo que un clon limpio no puede reabrir esta comprobación.
 
 ## Pruebas
 
@@ -172,9 +210,14 @@ de la suite; no inventan detecciones ni saltan la persistencia. Cubren:
 disparo conjunto de baja confianza y cambio sostenido, baja confianza sin
 cambio sostenido, insuficiencia que no acredita normalidad, corrida sin alertas,
 persistencia/resumen/verificación, no sobrescritura, deduplicación determinista,
-archivo corrupto, `run_id` inseguro y el ciclo completo del CLI.
+archivo corrupto, `run_id` inseguro y el ciclo completo del CLI. Además cubren
+`occurrence_state` explícito, inmutable y ajeno al ciclo de vida; insuficiencia
+marcada como `informational`; `policy_id` y captura exacta en cada `event_ref`;
+detección de `policy_id` alterado; rechazo de una captura sustituida por otra
+captura válida; y una corrida con **0 eventos** que produce solo la alerta
+informativa enlazada a la política.
 
-La suite completa ejecutó **105 pruebas** correctas el 13 nov 2026. Las
+La suite completa ejecutó **111 pruebas** correctas el 13 nov 2026. Las
 imágenes y los eventos de prueba son sintéticos: validan el contrato y **no
 sustituyen** una demostración C1/C2.
 
@@ -191,6 +234,10 @@ sustituyen** una demostración C1/C2.
   exploratoria de P6-04.
 - La evidencia insuficiente se registra como alerta informativa, nunca como
   normalidad; no cerrar la revisión como escena normal.
+- `occurrence_state` (`triggered`/`informational`) describe por qué existe la
+  alerta y es inmutable; no es un estado activo/resuelto ni un ciclo de vida.
+- Una corrida sin cuadros muestreados produce 0 eventos: solo la alerta
+  informativa enlazada a la política, con `occurred_at: null` y sin detecciones,
+  eventos ni capturas fabricados.
 - Los umbrales 0.30/0.70 de P6-04 y la ventana de P6-06 siguen siendo
   exploratorios hasta completar C1/C2 con escenas reales y permiso de uso.
-
