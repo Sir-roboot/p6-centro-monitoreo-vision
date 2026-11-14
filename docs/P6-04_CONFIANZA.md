@@ -292,6 +292,42 @@ escenas de referencia y evaluación con condición conocida. La corrida sí
 comprueba que se conservan scores bajos, se separan cuadros vacíos y no se
 declara normalidad ante evidencia incompleta.
 
+### Repetición con ventanas completas (13 nov 2026)
+
+Se repitió la captura del mismo stream local con `--sample-every 15` y
+`--max-frames 361`: los cuadros recibidos 1, 16, ..., 361 forman exactamente
+25 cuadros muestreados y cinco ventanas de cinco. El detector procesó los 25
+sin fallos ni cuadros sin detecciones; produjo 339 detecciones puntuadas.
+`recalcular_observaciones.py` devolvió `coincide: true`.
+
+El JSONL local de la corrida `monitor-p6-04-ventanas-20261113-220011` tiene
+SHA-256 `ea8c905d34fc15540f6222e9f4ef5a28c745b882ea31d5795614683f9e952b01`.
+Al evaluarlo contra la referencia externa anterior, sin modificar las
+puntuaciones, con umbrales exploratorios 0.17/0.61, resultaron 96 `low`,
+154 `doubt` y 89 `accepted`. Las cinco ventanas fueron completas y ninguna
+degradada: `sustained_change.status: no_sustained_change`,
+`evidence_sufficient: true` y `normality_established: true`. Esta última
+marca significa **solo** ausencia de cambio sostenido de confianza bajo la
+regla configurada; no demuestra seguridad de la escena, calidad del detector
+ni los escenarios completos C1/C2.
+
+Para recalcularla en el equipo que conserva ambos JSONL locales:
+
+```powershell
+.\.venv\Scripts\python.exe .\recalcular_observaciones.py --input .\datos_locales\observaciones\monitor-p6-04-ventanas-20261113-220011.jsonl
+.\.venv\Scripts\python.exe .\evaluar_confianza.py `
+  --input .\datos_locales\observaciones\monitor-p6-04-ventanas-20261113-220011.jsonl `
+  --reference .\datos_locales\observaciones\monitor-p6-04-20261113-214440.jsonl `
+  --lower 0.17 --upper 0.61 `
+  --threshold-justification "Cuartiles redondeados de referencia previa; exploratorio" `
+  --output .\datos_locales\politicas\monitor-p6-04-ventanas-20261113-220011-repro.json
+```
+
+Los JSONL, el video y el grabador no están versionados: esta comprobación
+documenta el resultado local, pero **no es una reproducción autónoma desde un
+clon limpio**. La evidencia completa de C1/C2 deberá conservar entradas o
+capturas accesibles y los eventos, alertas y consultas correspondientes.
+
 ## Trazabilidad con la rúbrica R3
 
 R3 corresponde al criterio de evaluación del curso; su texto no se versiona en
