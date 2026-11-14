@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import math
 from pathlib import Path
 import time
 from typing import Iterator
@@ -72,6 +73,27 @@ def _observacion(
     )
 
 
+def validar_configuracion_fuente(
+    *, source_id: str, sample_every: int = 1, interval_ms: float = 200.0,
+    max_frames: int | None = None,
+) -> None:
+    """Valida la configuracion comun sin abrir ni recorrer la fuente.
+
+    P6-03 la reutiliza para rechazar entradas invalidas antes de crear
+    cualquier archivo de observaciones.
+    """
+    if not isinstance(source_id, str) or not source_id or not source_id.replace("-", "").replace("_", "").isalnum():
+        raise ValueError("source_id debe contener solo letras, digitos, guion o guion bajo")
+    if isinstance(sample_every, bool) or not isinstance(sample_every, int) or sample_every < 1:
+        raise ValueError("sample_every debe ser >= 1")
+    if isinstance(interval_ms, bool) or not isinstance(interval_ms, (int, float)) or not math.isfinite(interval_ms) or interval_ms < 0:
+        raise ValueError("interval_ms no puede ser negativo")
+    if max_frames is not None and (
+        isinstance(max_frames, bool) or not isinstance(max_frames, int) or max_frames < 1
+    ):
+        raise ValueError("max_frames debe ser >= 1")
+
+
 def leer_fuente(
     source: str, *, source_id: str, sample_every: int = 1,
     interval_ms: float = 200.0, max_frames: int | None = None,
@@ -82,14 +104,10 @@ def leer_fuente(
     con su propio ritmo, por lo que no se retrasa artificialmente. Un EOF de
     archivo y una falla de lectura del stream son estados diferentes.
     """
-    if not source_id or not source_id.replace("-", "").replace("_", "").isalnum():
-        raise ValueError("source_id debe contener solo letras, digitos, guion o guion bajo")
-    if sample_every < 1:
-        raise ValueError("sample_every debe ser >= 1")
-    if interval_ms < 0:
-        raise ValueError("interval_ms no puede ser negativo")
-    if max_frames is not None and max_frames < 1:
-        raise ValueError("max_frames debe ser >= 1")
+    validar_configuracion_fuente(
+        source_id=source_id, sample_every=sample_every,
+        interval_ms=interval_ms, max_frames=max_frames,
+    )
 
     path = Path(source)
     is_stream = source.startswith(("http://", "https://", "rtsp://"))

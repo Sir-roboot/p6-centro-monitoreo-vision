@@ -1,9 +1,10 @@
 # P6 · Centro de monitoreo de visión
 
 Proyecto individual de Santiago Ortiz para la materia Servicios de Aprendizaje
-Automático. Este repositorio está en **fase progresiva**: ya recibe video y
-ejecuta un detector real en CPU, pero todavía no implementa métricas, eventos,
-alertas ni portal. No debe presentarse aún como entrega completa.
+Automático. Este repositorio está en **fase progresiva**: ya recibe video,
+ejecuta un detector real en CPU y persiste observaciones primarias versionadas,
+pero todavía no implementa métricas, eventos, alertas ni portal. No debe
+presentarse aún como entrega completa.
 
 ## Estado y arquitectura actual
 
@@ -13,6 +14,7 @@ Video reproducido en la laptop
     → MJPEG en 127.0.0.1:8765
     → lector_opencv.py + fuente.py (este repositorio)
     → detectar_opencv.py + detector_yolox.py (YOLOX-Tiny COCO, CPU)
+    → ejecutar_pipeline.py + observaciones.py (JSONL de P6-03)
     → futuras métricas, eventos, alertas y portal
 ```
 
@@ -110,6 +112,30 @@ acceso a Internet. La prueba real observada el 13 de
 noviembre de 2026 con una imagen externa de YOLOX detectó `dog`, `bicycle`,
 `car`, `tv` y `potted plant`; la inferencia tardó ~57 ms en CPU. Los pesos y
 las imágenes externas no se versionan.
+
+## Observaciones versionadas (P6-03)
+
+El pipeline guarda una cabecera, una observación por cuadro y un resumen en un
+JSONL con esquema `p6-03/1`. No persiste píxeles. Para generarlo sobre la
+secuencia sintética, sin descargar los pesos:
+
+```powershell
+.\.venv\Scripts\python.exe ejecutar_pipeline.py --source .\datos_locales\secuencia_demo --source-id demo --sample-every 3 --interval-ms 0 --output .\datos_locales\observaciones\demo-p6-03.jsonl --run-id demo-p6-03 --no-download
+```
+
+La salida predeterminada es `datos_locales/observaciones/<run_id>.jsonl`; use
+`--overwrite` para reemplazarla. Después se comprueba que los contadores
+persistidos se puedan recalcular sin abrir la fuente ni cargar el modelo:
+
+```powershell
+.\.venv\Scripts\python.exe recalcular_observaciones.py --input .\datos_locales\observaciones\demo-p6-03.jsonl
+```
+
+La última verificación local obtuvo **64 pruebas** correctas y una corrida demo
+con 12 cuadros recibidos, 4 procesados, 8 descartados por muestreo, 0 errores y
+0 detecciones; el recalculo coincidió. La secuencia sintética no contiene
+objetos COCO, así que no evalúa la calidad del detector. Contrato completo,
+estados de término y límites: [docs/P6-03_OBSERVACIONES.md](docs/P6-03_OBSERVACIONES.md).
 
 ### Procedencia y reutilización
 
