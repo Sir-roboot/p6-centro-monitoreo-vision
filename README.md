@@ -1,9 +1,9 @@
 # P6 · Centro de monitoreo de visión
 
 Proyecto individual de Santiago Ortiz para la materia Servicios de Aprendizaje
-Automático. Este repositorio está en **fase inicial**: recibe video en OpenCV,
-pero todavía no ejecuta el detector ni implementa métricas, eventos, alertas o
-portal. No debe presentarse aún como entrega completa.
+Automático. Este repositorio está en **fase progresiva**: ya recibe video y
+ejecuta un detector real en CPU, pero todavía no implementa métricas, eventos,
+alertas ni portal. No debe presentarse aún como entrega completa.
 
 ## Estado y arquitectura actual
 
@@ -12,7 +12,8 @@ Video reproducido en la laptop
     → grabador de pantalla local (fuera de este repositorio)
     → MJPEG en 127.0.0.1:8765
     → lector_opencv.py + fuente.py (este repositorio)
-    → futuros detector, métricas, eventos y portal
+    → detectar_opencv.py + detector_yolox.py (YOLOX-Tiny COCO, CPU)
+    → futuras métricas, eventos, alertas y portal
 ```
 
 El grabador está separado deliberadamente del Proyecto 6. Solo abre una señal
@@ -42,17 +43,88 @@ Genera 12 imágenes sintéticas locales (ignoradas por Git) y léelas en orden:
 La segunda orden debe terminar en `end_of_stream` con 12 cuadros recibidos,
 4 seleccionados, 8 descartados por muestreo y 0 errores. `--interval-ms 200`
 reproduce la secuencia a 5 cuadros/s; `--sample-every 3` entrega los cuadros
-1, 4, 7 y 10 al futuro detector. El muestreo por número de cuadro **no**
-garantiza una frecuencia temporal fija si el stream real varía de velocidad.
-`--interval-ms` solo acompasa archivos y secuencias, no los streams en vivo.
-Para una nueva prueba, usa otra carpeta en `--output` o retira únicamente los
-archivos generados que ya no necesites; el generador no sobrescribe archivos.
+1, 4, 7 y 10 al detector. El muestreo por número de cuadro **no** garantiza una
+frecuencia temporal fija si el stream real varía de velocidad. `--interval-ms`
+solo acompasa archivos y secuencias, no los streams en vivo. Para una nueva
+prueba, usa otra carpeta en `--output` o retira únicamente los archivos
+generados que ya no necesites; el generador no sobrescribe archivos.
 
-Para comprobar errores y estados de lectura:
+## Detector YOLOX-Tiny en CPU
+
+`detector_yolox.py` ejecuta **YOLOX-Tiny 0.1.1rc0 COCO en ONNX** con OpenCV DNN
+(backend `DNN_BACKEND_OPENCV`, target `DNN_TARGET_CPU`). No se agregó
+`onnxruntime` ni otra dependencia. El CLI `detectar_opencv.py` conecta la fuente
+de P6-01 con el detector y emite **una línea JSON por cuadro** más un resumen.
+
+La primera ejecución descarga los pesos oficiales a `models/yolox_tiny.onnx`
+(carpeta ignorada por Git), comprueba tamaño y SHA-256 antes de usarlos y los
+instala con reemplazo atómico:
+
+- URL: <https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_tiny.onnx>
+- SHA-256: `427cc366d34e27ff7a03e2899b5e3671425c262ea2291f88bb942bc1cc70b0f7`
+- Tamaño: 20 219 662 bytes
+- Entrada: `1×3×416×416` float32 BGR, valores 0–255, sin normalización
+- Salida: `1×3549×85`; clases COCO en el orden del modelo
+
+Para probarlo sobre la secuencia sintética, sin descargar si los pesos ya
+existen:
+
+```powershell
+.\.venv\Scripts\python.exe detectar_opencv.py --source .\datos_locales\secuencia_demo --source-id demo --sample-every 3 --interval-ms 200 --no-preview
+```
+
+Para una fuente real o un archivo autorizado se usan las mismas opciones de
+`lector_opencv.py`:
+
+```powershell
+.\.venv\Scripts\python.exe detectar_opencv.py --source http://127.0.0.1:8765/stream.mjpg --source-id monitor-video --sample-every 15 --seconds 60
+```
+
+`--weights RUTA` cambia el archivo de pesos y `--no-download` prohíbe la
+descarga: si falta o no coincide, el programa termina con error en vez de usar
+un archivo dudoso. `--score-threshold` (0.10 por omisión) y `--nms-threshold`
+(0.45) permiten ajustar los filtros; se documentan en cada resultado. La NMS es
+**class-agnostic**, igual que en el demo de YOLOX. `--no-preview` evita la
+ventana; con vista previa, `q` detiene el proceso.
+
+Cada resultado incluye `model` (nombre, dataset, versión, URL, SHA-256, tamaño,
+forma de entrada/salida, backend y clases), `filters`, `detections` con
+`class_id`, `class_name`, `confidence` y `bbox_xyxy` en píxeles de la imagen
+original, `class_counts`, `timings_ms` y `error`. Un fallo de lectura o
+inferencia durante el procesamiento produce `status="error"`,
+`detections=[]` y código de salida 1; si los pesos o el modelo no cargan, el
+programa termina antes de emitir resultados por cuadro. Una escena **sin
+objetos** produce `status="ok"` con `detections=[]`. Esa distinción evita
+confundir una imagen vacía con un detector caído.
+
+Pruebas del detector, pesos y CLI, sin red:
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
+
+`tests/test_detector_pesos.py` comprueba la lógica de verificación con archivos
+de prueba; no calcula el hash de los pesos reales. Las pruebas sustituyen la
+sesión de inferencia y las descargas, por lo que no necesitan los 20 MB ni
+acceso a Internet. La prueba real observada el 13 de
+noviembre de 2026 con una imagen externa de YOLOX detectó `dog`, `bicycle`,
+`car`, `tv` y `potted plant`; la inferencia tardó ~57 ms en CPU. Los pesos y
+las imágenes externas no se versionan.
+
+### Procedencia y reutilización
+
+- Modelo y pesos: YOLOX (Megvii), versión `0.1.1rc0`, publicados en el release
+  oficial. El código del proyecto YOLOX declara licencia Apache-2.0; no
+  asumimos una licencia separada para los pesos ni los redistribuimos aquí.
+- Dataset: COCO 2017, 80 clases; el orden de clases proviene del modelo.
+- Diseño reutilizado de **Proyecto 5 (equipo 03)**, módulo `p5.detector`
+  (detector y verificación de pesos de A1, Josué Godoy): letterbox abajo-derecha
+  con relleno 114, decodificación de la rejilla YOLOX, NMS class-agnostic,
+  orden COCO y constantes de URL/SHA-256. La implementación de P6 es
+  independiente y usa OpenCV DNN en lugar de ONNX Runtime; no importa el paquete
+  `p5` ni requiere sus archivos.
+- Los cuadros sintéticos siguen siendo propios y no son evidencia de detección.
+- Detalle y límites: [docs/P6-02_DETECTOR.md](docs/P6-02_DETECTOR.md).
 
 ## Entrada del monitor y video propio
 
@@ -85,9 +157,8 @@ El contrato de salida para el detector está en [docs/P6-01_FUENTE.md](docs/P6-0
 
 ## Pendiente para la entrega
 
-- Integrar un detector real e identificar pesos, clases, versión,
-  preprocesamiento y componentes reutilizados.
-- Definir fuente reproducible y política de muestreo progresivo.
+- Definir C1/C2 con escenas reales reproducibles y permiso de uso confirmado;
+  el detector ya está integrado, pero falta la evidencia de esas escenas.
 - Implementar confianza por zonas, referencia y cambio sostenido; distinguir
   datos insuficientes de estado normal.
 - Registrar métricas G1–G7 aplicables, eventos, capturas y alertas persistentes.
